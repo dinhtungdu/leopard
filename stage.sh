@@ -53,6 +53,7 @@ EOF
 done
 ln -s mariadb "$OUT/bin/mysql"
 ln -s mariadb-dump "$OUT/bin/mysqldump"
+ln -s mariadb-admin "$OUT/bin/mysqladmin"
 # So `leopard` itself works inside `leopard shell`. build.sh adds ../leopard.
 ln -s ../leopard "$OUT/bin/leopard"
 

@@ -27,7 +27,7 @@ exit                                       # back to your normal shell
 ```
 
 `leopard shell` opens your usual shell (`$SHELL`) with `php`, `wp`, `composer`,
-`mysql`, and `leopard` first on PATH. Only that shell sees them. It also sets
+`mysql`, `mysqladmin`, `mysqldump`, and `leopard` first on PATH. Only that shell sees them. It also sets
 `LEOPARD_SHELL=1`, which a prompt can show. `leopard shell -c 'wp plugin list'`
 runs one command the same way.
 
@@ -39,11 +39,12 @@ export PATH="$HOME/.leopard/bin:$PATH"     # as root: /var/lib/leopard/bin
 php -v; wp --info; composer install; mysql
 ```
 
-`link` puts `leopard`, `php`, `wp`, `composer`, and `mysql` in `~/.leopard/bin`
+`link` puts `leopard`, `php`, `wp`, `composer`, `mysql`, `mysqladmin`, and
+`mysqldump` in `~/.leopard/bin`
 (`/var/lib/leopard/bin` as root). That folder belongs to Leopard, and the `export`
 affects only the current shell. If you want the commands everywhere, name a folder
-yourself, for example `leopard link /usr/local/bin`. `link` never replaces a `php`
-or `mysql` that the system installed.
+yourself, for example `leopard link /usr/local/bin`. `link` never replaces a
+tool that the system installed.
 
 Without linking, `leopard php`, `leopard wp`, `leopard composer`, and
 `leopard mysql` work the same way.
@@ -67,7 +68,7 @@ For Laravel, serve the `public` folder: `leopard start public`.
 | Web | Apache 2.4 with mod_php, mod_rewrite, and `.htaccess` (AllowOverride All) on port 8080 |
 | PHP | Upstream PHP with mysqli, pdo_mysql, gd, intl, mbstring, zip, curl, xml, exif, bcmath, sqlite, opcache |
 | Database | MariaDB on 127.0.0.1:3306. User `dev`, password `dev`, full rights. A `wordpress` database already exists. `root` has no password. |
-| Tools | `php`, `wp` (WP-CLI), `composer`, `mysql`, after `leopard link` |
+| Tools | `php`, `wp` (WP-CLI), `composer`, `mysql`, `mysqladmin`, `mysqldump`, after `leopard link` or in `leopard shell` |
 
 Run `leopard version` for exact versions.
 

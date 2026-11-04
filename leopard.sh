@@ -197,17 +197,17 @@ lock() {
 link() {
   dir=${1:-$H/bin}
   mkdir -p "$dir"
-  for t in leopard php wp composer mysql; do
+  for t in leopard php wp composer mysql mysqladmin mysqldump; do
     src=$R/bin/$t
     [ "$t" = leopard ] && src=$R/leopard
-    # Replace our own older links, but never a php or mysql the system installed.
+    # Replace our own older links, but never a tool the system installed.
     if [ -e "$dir/$t" ] && ! readlink "$dir/$t" | grep -q '/runtime/'; then
       echo "Skipped $dir/$t: it already exists and is not from Leopard." >&2
       continue
     fi
     ln -sfn "$src" "$dir/$t"
   done
-  echo "Linked leopard, php, wp, composer, and mysql in $dir."
+  echo "Linked leopard, php, wp, composer, mysql, mysqladmin, and mysqldump in $dir."
   case :$PATH: in
     *":$dir:"*) ;;
     *) echo "To use them in this shell: export PATH=\"$dir:\$PATH\"" ;;
@@ -234,7 +234,7 @@ case $cmd in
   link) link "${1:-}" ;;
   # A child shell with the bundled tools first on PATH. Exit it to go back.
   shell)
-    echo "Leopard shell: php, wp, composer, mysql, and leopard are on PATH. Type exit to leave." >&2
+    echo "Leopard shell: php, wp, composer, mysql, mysqladmin, mysqldump, and leopard are on PATH. Type exit to leave." >&2
     LEOPARD_SHELL=1 exec "${SHELL:-/bin/sh}" "$@"
     ;;
   version) cat "$R/VERSIONS" ;;
@@ -248,7 +248,8 @@ Usage: leopard <command>
   wp ...            WP-CLI
   composer ...      Composer
   shell             Open a shell with php, wp, composer, mysql, and leopard on PATH
-  link [dir]        Link leopard, php, wp, composer, and mysql into dir
+                    (plus mysqladmin and mysqldump)
+  link [dir]        Link leopard, php, wp, composer, mysql, mysqladmin, and mysqldump into dir
                     (default: $LEOPARD_HOME/bin, which changes nothing on the system)
 Settings (env): LEOPARD_HOME (~/.leopard), LEOPARD_PORT (8080), LEOPARD_DB_PORT (3306)
 EOF

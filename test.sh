@@ -41,7 +41,12 @@ docker exec "$c" sh -ec '
   mkdir /wp && cd /wp
   # Two first starts at once must not corrupt the database copy.
   leopard start /wp >/dev/null & leopard start /wp >/dev/null; wait
-  printf "type php wp composer mysql leopard\\n" | SHELL=/bin/sh leopard shell 2>/dev/null | grep -c /var/lib/leopard/runtime/ | grep -qx 5 && echo "leopard shell: ok"
+  printf "type php wp composer mysql mysqladmin mysqldump leopard\\n" | SHELL=/bin/sh leopard shell 2>/dev/null | grep -c /var/lib/leopard/runtime/ | grep -qx 7
+  echo "leopard shell: ok"
+  # WooCommerce tests/bin/install.sh needs mysqladmin on PATH.
+  mysqladmin -udev -pdev -h127.0.0.1 ping
+  mysqldump -udev -pdev -h127.0.0.1 --no-data wordpress >/dev/null
+  echo "mysqldump: ok"
   wp core download --quiet
   wp config create --dbname=wordpress --dbuser=dev --dbpass=dev --dbhost=127.0.0.1 --quiet
   chown -R 65534:65534 /wp
