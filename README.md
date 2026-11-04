@@ -5,8 +5,13 @@ run it, and you have a PHP server with a database. It installs nothing on the
 machine. There is no apt, no Docker, and no setup script.
 
 ```sh
+curl -fLo leopard https://github.com/dinhtungdu/leopard/releases/latest/download/leopard-php8.3-linux-$(uname -m)
+chmod +x leopard
 ./leopard start /path/to/docroot   # defaults to the current directory
 ```
+
+Files exist for x86_64 and aarch64 (ARM64) Linux. Each release also lists their
+SHA-256 sums in `SHA256SUMS`.
 
 The first start unpacks the file into `~/.leopard` and takes about 2.5 seconds.
 Later starts take under a second.
