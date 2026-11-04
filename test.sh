@@ -216,6 +216,10 @@ docker exec "$c" sh -ec '
     echo "per-site php $other next to $mine: ok"
     leopard site delete v2 >/dev/null
   fi
+  # `leopard php list|install|default` reach Leopard, not the PHP binary.
+  leopard php list --json | j "\$d[\"installed\"][0][\"version\"]" | grep -q "^[0-9]"
+  [ "$(leopard php -r "echo 1+1;")" = 2 ]
+  echo "php list, and php -r still runs php: ok"
   # A damaged pack is refused.
   cp "$(ls /packs/php-*.tgz | head -1)" /tmp/bad.tgz && echo x >>/tmp/bad.tgz
   set +e; leopard packs add /tmp/bad.tgz --json >/tmp/e.json; code=$?; set -e

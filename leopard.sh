@@ -162,6 +162,11 @@ EOF
 
 cmd=${1:-help}
 [ $# -gt 0 ] && shift
+# `leopard php list|install|default` manage PHP versions. Any other
+# `leopard php ...`, or a script with one of those names, runs PHP itself.
+if [ "$cmd" = php ]; then
+  case ${1:-} in list | install | default) [ -e "$1" ] || control php "$@" ;; esac
+fi
 case $cmd in
   # php.ini and the other generated settings must exist before the first tool runs.
   php | wp | composer | mysql | shell) [ -f "$H/conf/wp-cli.yml" ] || (control prepare) ;;
