@@ -10,9 +10,18 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq --no-install-recommends mariadb-server mariadb-client \
   libpng-dev libjpeg62-turbo-dev libfreetype-dev libwebp-dev libicu-dev libzip-dev \
-  ca-certificates curl media-types >/dev/null
+  libxslt1-dev libffi-dev libmagickwand-dev ca-certificates curl media-types >/dev/null
 docker-php-ext-configure gd --with-freetype --with-jpeg --with-webp >/dev/null
-docker-php-ext-install -j"$(nproc)" gd intl mysqli pdo_mysql zip bcmath exif >/dev/null
+docker-php-ext-configure ffi --with-ffi >/dev/null
+docker-php-ext-install -j"$(nproc)" gd intl mysqli pdo_mysql zip bcmath exif \
+  calendar ftp gettext pcntl shmop sockets sysvmsg sysvsem sysvshm xsl ffi >/dev/null
+# Xdebug is always loaded. php.ini sets its mode, which is off unless the user
+# turns it on with `leopard xdebug <mode>`.
+for ext in xdebug imagick; do
+  # imagick asks for the ImageMagick prefix; an empty answer means autodetect.
+  echo | MAKEFLAGS=-j$(nproc) pecl install "$ext" >/tmp/pecl-$ext.log 2>&1 || { tail -30 /tmp/pecl-$ext.log; exit 1; }
+done
+docker-php-ext-enable xdebug imagick >/dev/null
 # Upstream PHP 8.5+ builds opcache in; older versions need it installed.
 php -m | grep -q 'Zend OPcache' || docker-php-ext-install opcache >/dev/null
 
@@ -26,9 +35,20 @@ cp -r /usr/lib/mysql/plugin/. "$OUT/mariadb/plugin/"
 share=$(dirname "$(find /usr/share/mariadb /usr/share/mysql -maxdepth 2 -name charsets -type d 2>/dev/null | head -1)")
 cp -r "$share/." "$OUT/mariadb/share/"
 cp /etc/mime.types /etc/ssl/certs/ca-certificates.crt "$OUT/conf/"
+# ImageMagick loads its file-format coders and its config from compiled-in paths.
+mkdir -p "$OUT/imagemagick"
+cp -r "$(find /usr/lib -maxdepth 2 -type d -name 'ImageMagick-*' | head -1)/." "$OUT/imagemagick/lib/"
+cp -r "$(find /etc -maxdepth 1 -type d -name 'ImageMagick-*' | head -1)/." "$OUT/imagemagick/etc/"
+# The CLI writes errors to stderr, so warnings never mix into output that
+# scripts read, such as `url=$(wp option get home)`.
+mkdir -p "$OUT/php/cli.d"
+cat >"$OUT/php/cli.d/zz-leopard-cli.ini" <<'EOF'
+display_errors = stderr
+error_reporting = E_ALL & ~E_DEPRECATED
+EOF
 
 # Harvest the shared library closure of every ELF file we ship.
-find "$OUT/libexec" "$OUT/modules" "$OUT/php/ext" "$OUT/mariadb/plugin" -type f \
+find "$OUT/libexec" "$OUT/modules" "$OUT/php/ext" "$OUT/mariadb/plugin" "$OUT/imagemagick" -type f \
   -exec sh -c 'head -c4 "$1" | grep -q ELF && ldd "$1"' _ {} \; >/tmp/ldd.txt
 if grep 'not found' /tmp/ldd.txt; then echo 'Missing libraries above' >&2; exit 1; fi
 awk '/=> \//{print $3} /^\s*\/.*ld-linux/{print $1}' /tmp/ldd.txt | sort -u |
@@ -43,11 +63,15 @@ LDSO=$(basename "$(ls "$OUT"/lib/ld-linux-*.so.*)")
 # Each wrapper finds its own config, so it works from any PATH, even as a symlink.
 # The bundle unpacks to <home>/runtime/<id>, so <home> is two levels up.
 for b in apache2 mariadbd mariadb mariadb-dump mariadb-admin php; do
+  scan='$R/php/conf.d'
+  [ "$b" = php ] && scan='$R/php/conf.d:$R/php/cli.d'
   cat >"$OUT/bin/$b" <<EOF
 #!/bin/sh
 R=\$(cd "\$(dirname "\$(readlink -f "\$0")")/.." && pwd)
 H=\$(cd "\$R/../.." && pwd)
-PHPRC="\$H/conf" PHP_INI_SCAN_DIR="\$R/php/conf.d" MYSQL_HOME="\$H/conf" GCONV_PATH="\$R/lib/gconv" exec "\$R/lib/$LDSO" --library-path "\$R/lib" --argv0 "\$0" "\$R/libexec/$b" "\$@"
+M=\$R/imagemagick
+export MAGICK_CODER_MODULE_PATH="\$(echo "\$M"/lib/modules-*/coders)" MAGICK_CODER_FILTER_PATH="\$(echo "\$M"/lib/modules-*/filters)" MAGICK_CONFIGURE_PATH="\$M/etc"
+PHPRC="\$H/conf" PHP_INI_SCAN_DIR="$scan" MYSQL_HOME="\$H/conf" GCONV_PATH="\$R/lib/gconv" exec "\$R/lib/$LDSO" --library-path "\$R/lib" --argv0 "\$0" "\$R/libexec/$b" "\$@"
 EOF
   chmod +x "$OUT/bin/$b"
 done
@@ -82,6 +106,9 @@ for tool in wp-cli composer; do
 R=\$(cd "\$(dirname "\$(readlink -f "\$0")")/.." && pwd)
 # WP-CLI and Composer run php and mariadb from PATH, so put ours first.
 export PATH="\$R/bin:\$PATH"
+# Leopard's WP-CLI config knows about mod_rewrite and inherits the user's own.
+H=\$(cd "\$R/../.." && pwd)
+[ -f "\$H/conf/wp-cli.yml" ] && export WP_CLI_CONFIG_PATH="\${WP_CLI_CONFIG_PATH:-\$H/conf/wp-cli.yml}"
 [ "\$(id -u)" = 0 ] && export WP_CLI_ALLOW_ROOT=1 COMPOSER_ALLOW_SUPERUSER=1
 exec "\$R/bin/php" "\$R/$tool.phar" "\$@"
 EOF

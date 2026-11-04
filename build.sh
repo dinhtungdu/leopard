@@ -13,6 +13,7 @@ docker run --rm -v "$PWD:/src:ro" -v "$PWD/dist:/dist" "php:$PHP_VERSION-apache"
   set -e
   bash /src/stage.sh /tmp/out
   cp /src/leopard.sh /tmp/out/leopard
+  cp /src/leopard.php /src/skills/using-leopard/SKILL.md /tmp/out/
   tar -C /tmp/out -czf /dist/payload.tgz .
   chown $(id -u):$(id -g) /dist/payload.tgz"
 
@@ -27,6 +28,9 @@ if [ -z "${LEOPARD_HOME:-}" ]; then
 fi
 case $LEOPARD_HOME in /*) ;; *) LEOPARD_HOME=$PWD/$LEOPARD_HOME ;; esac
 export LEOPARD_HOME
+# Where this file lives, so `leopard service install` can point systemd at it.
+LEOPARD_BIN=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
+export LEOPARD_BIN
 R=$LEOPARD_HOME/runtime/@ID@
 if [ ! -x "$R/leopard" ]; then
   mkdir -p "$LEOPARD_HOME/runtime"

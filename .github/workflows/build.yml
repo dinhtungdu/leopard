@@ -16,14 +16,17 @@ jobs:
       fail-fast: false
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        php: ['8.3', '8.4', '8.5']
     runs-on: ${{ matrix.runner }}
+    env:
+      PHP_VERSION: ${{ matrix.php }}
     steps:
       - uses: actions/checkout@v4
       - run: ./build.sh
-      - run: ./test.sh "dist/leopard-php8.3-linux-$(uname -m)"
+      - run: ./test.sh "dist/leopard-php$PHP_VERSION-linux-$(uname -m)"
       - uses: actions/upload-artifact@v4
         with:
-          name: leopard-${{ matrix.runner }}
+          name: leopard-php${{ matrix.php }}-${{ matrix.runner }}
           path: dist/leopard-*
           if-no-files-found: error
 
