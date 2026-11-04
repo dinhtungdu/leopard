@@ -2,8 +2,11 @@
 // The half of the launcher that prints data and manages sites. leopard.sh
 // calls it with the bundled PHP and passes the resolved settings as LP_* vars.
 // Every command takes --json. Errors then print {"ok":false,"error":{...}}.
+// Every JSON reply carries "api": API. Within one api number, fields are only
+// ever added; a rename or removal bumps it.
 
-const EXIT_ERROR = 1, EXIT_USAGE = 2, EXIT_NOT_FOUND = 3, EXIT_EXISTS = 4, EXIT_NOT_RUNNING = 5;
+const API = 1;
+const EXIT_ERROR = 1, EXIT_USAGE = 2, EXIT_NOT_FOUND = 3, EXIT_EXISTS = 4, EXIT_NOT_RUNNING = 5, EXIT_BUSY = 6;
 const DB_USER = 'dev', DB_PASSWORD = 'dev';
 const JSON_FLAGS = JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE;
 
@@ -27,7 +30,7 @@ function out(array $data, string $text): void
 {
     global $json;
     if ($json) {
-        echo json_encode(['ok' => true] + $data, JSON_FLAGS), "\n";
+        echo json_encode(['ok' => true, 'api' => API] + $data, JSON_FLAGS), "\n";
     } else {
         echo $text;
     }
@@ -40,6 +43,24 @@ function alive(string $pidFile): ?int
     if ($pid <= 0) return null;
     $cmdline = @file_get_contents("/proc/$pid/cmdline");
     return $cmdline !== false && str_contains(str_replace("\0", ' ', $cmdline), "$home/") ? $pid : null;
+}
+
+// Site changes run one at a time. A full create can take minutes, so the wait
+// is bounded by LEOPARD_LOCK_WAIT and then fails with exit 6, never hangs.
+function sitesLock()
+{
+    global $home;
+    $wait = ctype_digit((string) getenv('LEOPARD_LOCK_WAIT')) ? (int) getenv('LEOPARD_LOCK_WAIT') : 120;
+    $lock = fopen("$home/.sites.lock", 'ce');
+    $deadline = microtime(true) + $wait;
+    while (!flock($lock, LOCK_EX | LOCK_NB)) {
+        if (microtime(true) >= $deadline) {
+            throw new LeopardError('busy', "Another site create or delete is still running after {$wait}s.", EXIT_BUSY,
+                'Retry later, or set LEOPARD_LOCK_WAIT to wait longer.');
+        }
+        usleep(100000);
+    }
+    return $lock;
 }
 
 function versions(): array
@@ -244,7 +265,7 @@ function doctor(): void
     foreach ($checks as $c) $text .= ($c['ok'] ? 'ok    ' : 'FAIL  ') . $c['name'] . ($c['detail'] ? "  ({$c['detail']})" : '') . "\n";
     global $json;
     if ($json) {
-        echo json_encode(['ok' => !$failed, 'checks' => $checks], JSON_FLAGS), "\n";
+        echo json_encode(['ok' => !$failed, 'api' => API, 'checks' => $checks], JSON_FLAGS), "\n";
     } else {
         echo $text;
     }
@@ -322,8 +343,7 @@ function siteCreate(array $args): void
     }
 
     @mkdir(registryDir(), 0777, true);
-    $lock = fopen("$home/.sites.lock", 'c');
-    flock($lock, LOCK_EX);
+    $lock = sitesLock();
     if ($old = readSite($name)) {
         throw ($old['state'] ?? 'ready') === 'creating'
             ? new LeopardError('exists', "An earlier create of '$name' did not finish.", EXIT_EXISTS, "Run `leopard site delete $name` to remove what it left, then create it again.")
@@ -425,8 +445,7 @@ function siteDelete(array $args): void
 {
     global $home;
     if (count($args) !== 1) throw new LeopardError('usage', 'Usage: leopard site delete NAME', EXIT_USAGE);
-    $lock = fopen("$home/.sites.lock", 'c');
-    flock($lock, LOCK_EX);
+    $lock = sitesLock();
     $site = needSite($args[0]);
     $name = $site['name'];
     db()->query("DROP DATABASE IF EXISTS `{$site['db']}`");
@@ -483,14 +502,14 @@ try {
     main($args);
 } catch (LeopardError $e) {
     if ($json) {
-        echo json_encode(['ok' => false, 'error' => array_filter(['code' => $e->errorCode, 'message' => $e->getMessage(), 'hint' => $e->hint])], JSON_FLAGS), "\n";
+        echo json_encode(['ok' => false, 'api' => API, 'error' => array_filter(['code' => $e->errorCode, 'message' => $e->getMessage(), 'hint' => $e->hint])], JSON_FLAGS), "\n";
     } else {
         fwrite(STDERR, 'leopard: ' . $e->getMessage() . "\n" . ($e->hint ? "hint: {$e->hint}\n" : ''));
     }
     exit($e->exit);
 } catch (Throwable $e) {
     $msg = get_class($e) . ': ' . $e->getMessage();
-    if ($json) echo json_encode(['ok' => false, 'error' => ['code' => 'internal', 'message' => $msg]], JSON_FLAGS), "\n";
+    if ($json) echo json_encode(['ok' => false, 'api' => API, 'error' => ['code' => 'internal', 'message' => $msg]], JSON_FLAGS), "\n";
     else fwrite(STDERR, "leopard: $msg\n");
     exit(EXIT_ERROR);
 }

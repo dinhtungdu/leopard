@@ -35,7 +35,22 @@ R=$LEOPARD_HOME/runtime/@ID@
 if [ ! -x "$R/leopard" ]; then
   mkdir -p "$LEOPARD_HOME/runtime"
   exec 9>"$LEOPARD_HOME/runtime/.lock"
-  command -v flock >/dev/null && flock 9
+  # Wait for another unpack, but not forever. Busybox flock has no -w.
+  W=${LEOPARD_LOCK_WAIT:-120}
+  case $W in '' | *[!0-9]*) W=120 ;; esac
+  i=0
+  while command -v flock >/dev/null && ! flock -n 9; do
+    i=$((i + 1))
+    if [ $i -gt $((W * 10)) ]; then
+      m="Another Leopard file is still unpacking into $LEOPARD_HOME/runtime after ${W}s."
+      case " $* " in
+        *" --json "*) printf '{"ok":false,"api":1,"error":{"code":"busy","message":"%s","hint":"Retry, or set LEOPARD_LOCK_WAIT to wait longer."}}\n' "$m" ;;
+        *) echo "leopard: $m" >&2 ;;
+      esac
+      exit 6
+    fi
+    sleep 0.1
+  done
   if [ ! -x "$R/leopard" ]; then
     rm -rf "$LEOPARD_HOME"/runtime/.tmp.*
     T=$(mktemp -d "$LEOPARD_HOME/runtime/.tmp.XXXXXX")

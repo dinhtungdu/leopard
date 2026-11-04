@@ -86,6 +86,20 @@ docker exec "$c" sh -ec '
   set +e; leopard site info nope --json >/tmp/e.json; code=$?; set -e
   [ $code = 3 ] && [ "$(j "\$d[\"error\"][\"code\"]" </tmp/e.json)" = not_found ]
   echo "not found: exit 3 with json error: ok"
+  [ "$(j "\$d[\"api\"]" </tmp/e.json)" = 1 ] && [ "$(leopard status --json | j "\$d[\"api\"]")" = 1 ]
+  echo "json carries api 1: ok"
+
+  # Another command holding a lock makes this one fail fast with exit 6.
+  for f in .lock .sites.lock; do
+    sh -c "exec 9>/var/lib/leopard/$f; flock 9; sleep 4" & holder=$!
+    sleep 0.5
+    if [ $f = .lock ]; then cmd="leopard start --json"; else cmd="leopard site create held --json"; fi
+    set +e; LEOPARD_LOCK_WAIT=1 timeout 20 $cmd >/tmp/e.json; code=$?; set -e
+    wait $holder
+    [ $code = 6 ] && [ "$(j "\$d[\"error\"][\"code\"]" </tmp/e.json)" = busy ]
+  done
+  [ ! -e /var/lib/leopard/sites/held ]
+  echo "held lock: exit 6 busy, no hang: ok"
 
   mkdir -p /src/hello && printf "<?php\n/* Plugin Name: Hello Leopard */\n" >/src/hello/hello.php
   leopard site create gb --title "GB Test" --plugin /src/hello --activate hello --json >/tmp/gb.json
@@ -96,6 +110,9 @@ docker exec "$c" sh -ec '
   leopard php -r "echo file_get_contents(\"$url/wp-login.php\");" | grep -q user_login
   leopard php -r "echo file_get_contents(\"$url/sample-page/\");" | grep -q "Sample Page"
   echo "site create, pretty permalinks, plugin link: ok"
+  http_code() { leopard php -r "@file_get_contents(\"\$argv[1]\"); echo explode(\" \", \$http_response_header[0])[1];" "$1"; }
+  [ "$(http_code "$url/.htaccess")" = 403 ] && [ "$(http_code "$url/wp-login.php")" = 200 ]
+  echo ".htaccess denied: ok"
 
   set +e; leopard site create gb --json >/tmp/e.json; code=$?; set -e
   [ $code = 4 ] && [ -f /var/lib/leopard/sites/gb/wp-config.php ]
@@ -159,6 +176,11 @@ docker exec "$c" sh -ec '
   leopard php -r "echo file_get_contents(\"$url/wp-login.php\");" | grep -q user_login
   [ "$(leopard site wp gb option get home)" = "$url" ]
   echo "db port change keeps sites working: ok"
+  # A good start deletes runtimes left by older Leopard files, and nothing else.
+  mkdir /var/lib/leopard/runtime/0123456789ab /var/lib/leopard/runtime/keep-me
+  leopard restart >/dev/null
+  [ ! -e /var/lib/leopard/runtime/0123456789ab ] && [ -d /var/lib/leopard/runtime/keep-me ]
+  echo "old runtimes removed: ok"
   leopard doctor --json | j "\$d[\"ok\"] ? \"doctor: ok\" : \"doctor failed\"" | grep -x "doctor: ok"
   leopard stop --json | j "\$d[\"db\"][\"running\"] ? \"bad\" : \"stop --json: ok\""
 '

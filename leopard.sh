@@ -2,8 +2,9 @@
 # Runtime launcher. Lives at the root of the unpacked bundle as ./leopard.
 # All state (database, config, sites, logs, pids) lives in $LEOPARD_HOME.
 # Commands that print data (status, version, config, site, doctor) accept
-# --json. Exit codes: 0 ok, 1 error, 2 bad usage, 3 not found, 4 already
-# exists, 5 server not running.
+# --json, and every JSON reply carries "api": 1. Exit codes: 0 ok, 1 error,
+# 2 bad usage, 3 not found, 4 already exists, 5 server not running, 6 busy
+# (another command held the lock for longer than LEOPARD_LOCK_WAIT seconds).
 set -eu
 R=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
 # Run through the single file, LEOPARD_HOME is set. Run through a symlink made
@@ -31,6 +32,8 @@ SOCK=$RUN/mysqld.sock
 [ ${#SOCK} -gt 100 ] && SOCK=/tmp/leopard-$(printf %s "$H" | cksum | cut -d' ' -f1).sock
 export PATH="$R/bin:$PATH"
 JSON=0
+LOCK_WAIT=${LEOPARD_LOCK_WAIT:-120}
+case $LOCK_WAIT in '' | *[!0-9]*) LOCK_WAIT=120 ;; esac
 
 alive() { [ -f "$1" ] && running "$(cat "$1")"; }
 # A pid counts as ours only if its command line names this home. That rejects
@@ -42,13 +45,16 @@ root() { [ "$(id -u)" = 0 ]; }
 # shellcheck disable=SC2016  # $argv is PHP's, not the shell's.
 port_free() { php -r 'exit(@stream_socket_server("tcp://$argv[1]:$argv[2]") ? 0 : 1);' "$1" "$2" 2>/dev/null; }
 
-# die <exit code> <error code> <message>
+# die <exit code> <error code> <message> [hint]
 die() {
   if [ "$JSON" = 1 ]; then
-    m=$(printf %s "$3" | tr '\n\r\t' '   ' | tr -d '\000-\037' | sed 's/\\/\\\\/g; s/"/\\"/g')
-    printf '{"ok":false,"error":{"code":"%s","message":"%s"}}\n' "$2" "$m"
+    esc() { printf %s "$1" | tr '\n\r\t' '   ' | tr -d '\000-\037' | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+    h=''
+    [ -n "${4:-}" ] && h=",\"hint\":\"$(esc "$4")\""
+    printf '{"ok":false,"api":1,"error":{"code":"%s","message":"%s"%s}}\n' "$2" "$(esc "$3")" "$h"
   else
     echo "leopard: $3" >&2
+    [ -n "${4:-}" ] && echo "hint: $4" >&2
   fi
   exit "$1"
 }
@@ -169,6 +175,10 @@ DocumentRoot "$docroot"
   Require all granted
 </Directory>
 DirectoryIndex index.php index.html
+# .htaccess and .htpasswd can hold secrets and rewrite rules. Never serve them.
+<Files ".ht*">
+  Require all denied
+</Files>
 <FilesMatch "\.php$">
   SetHandler application/x-httpd-php
 </FilesMatch>
@@ -270,6 +280,29 @@ start() {
   save_config
   # After an upgrade, links from `leopard link` still point at the old runtime.
   if [ -L "$H/bin/php" ] && [ "$(readlink "$H/bin/php")" != "$R/bin/php" ]; then link "$H/bin" >/dev/null; fi
+  remove_old_runtimes
+}
+
+# Each new Leopard file unpacks a new runtime (about 400 MB) next to the old
+# ones. After a good start, delete the old ones that no process still runs.
+remove_old_runtimes() {
+  old=''
+  for d in "$H"/runtime/*/; do
+    id=$(basename "$d")
+    [ ${#id} = 12 ] && [ "$id" != "$(basename "$R")" ] || continue
+    case $id in *[!0-9a-f]*) continue ;; esac
+    old="$old $id"
+  done
+  [ -n "$old" ] || return 0
+  # Skip this time if a Leopard file is unpacking a runtime right now.
+  exec 8>"$H/runtime/.lock"
+  if command -v flock >/dev/null && ! flock -n 8; then exec 8>&-; return 0; fi
+  used=$(cat /proc/[0-9]*/cmdline 2>/dev/null | tr '\0' '\n' | grep -o '/runtime/[0-9a-f]*/' | sort -u || true)
+  for id in $old; do
+    case $used in *"/runtime/$id/"*) continue ;; esac
+    rm -rf "${H:?}/runtime/$id"
+  done
+  exec 8>&-
 }
 
 stop_all() {
@@ -280,10 +313,18 @@ stop_all() {
 # Only one start, stop, or restart runs at a time, so two first starts never
 # copy the database into the same place. Servers start with fd 9 closed, so
 # they do not hold the lock after this command exits.
+# The wait is bounded: after LEOPARD_LOCK_WAIT seconds the command exits 6.
+# Busybox flock has no -w, so retry -n.
 lock() {
   exec 9>"$H/.lock"
-  command -v flock >/dev/null && flock 9
-  return 0
+  command -v flock >/dev/null || return 0
+  i=0
+  until flock -n 9; do
+    i=$((i + 1))
+    [ $i -gt $((LOCK_WAIT * 10)) ] && die 6 busy "Another start, stop, or restart is still running after ${LOCK_WAIT}s." \
+      "Retry in a moment, or set LEOPARD_LOCK_WAIT to wait longer."
+    sleep 0.1
+  done
 }
 
 # By default the links go in Leopard's own folder, so nothing on the system
@@ -393,7 +434,7 @@ xdebug() {
     reload_web
   fi
   if [ $JSON = 1 ]; then
-    printf '{"ok":true,"xdebug_mode":"%s"}\n' "$XDEBUG"
+    printf '{"ok":true,"api":1,"xdebug_mode":"%s"}\n' "$XDEBUG"
   else
     echo "Xdebug mode: $XDEBUG. For one command only, set XDEBUG_MODE instead."
   fi
@@ -462,7 +503,8 @@ Tools (bundled)
 Settings come from the environment first, then from earlier runs:
   LEOPARD_HOME ($H)
   LEOPARD_PORT ($PORT)  LEOPARD_DB_PORT ($DB_PORT)  LEOPARD_URL ($URL)
-Exit codes: 0 ok, 1 error, 2 bad usage, 3 not found, 4 already exists, 5 not running.
+  LEOPARD_LOCK_WAIT (120): seconds to wait for another command before exit 6
+Exit codes: 0 ok, 1 error, 2 bad usage, 3 not found, 4 already exists, 5 not running, 6 busy.
 EOF
 }
 

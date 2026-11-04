@@ -105,9 +105,14 @@ XDEBUG_MODE=coverage leopard shell -c 'vendor/bin/phpunit --coverage-text'
 
 ## Exit codes and errors
 
-0 ok, 1 error, 2 bad usage, 3 not found, 4 already exists, 5 not running. With
-`--json`, errors print `{"ok": false, "error": {"code", "message", "hint"}}`.
-Follow the `hint`.
+0 ok, 1 error, 2 bad usage, 3 not found, 4 already exists, 5 not running,
+6 busy. With `--json`, every reply has `"api": 1`, and errors print
+`{"ok": false, "api": 1, "error": {"code", "message", "hint"}}`. Follow the `hint`.
+
+Exit 6 (`busy`) means another Leopard command held the lock for longer than
+`LEOPARD_LOCK_WAIT` seconds (default 120). It is safe to retry. A long
+`site create` holds the site lock, so raise `LEOPARD_LOCK_WAIT` when you
+create several sites in parallel.
 
 ## Boot
 

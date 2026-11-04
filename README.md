@@ -104,6 +104,7 @@ use the same values without the variables:
 - `LEOPARD_PORT` sets the web port. The default is 8080.
 - `LEOPARD_DB_PORT` sets the database port. The default is 3306.
 - `LEOPARD_URL` sets the base URL that browsers use. The default is `http://localhost:<port>`.
+- `LEOPARD_LOCK_WAIT` sets how many seconds a command waits for another one before it exits 6. The default is 120. It is not saved.
 
 To run two stacks side by side, give each its own `LEOPARD_HOME` and ports.
 
@@ -111,10 +112,13 @@ To run two stacks side by side, give each its own `LEOPARD_HOME` and ports.
 
 Leopard is built to be driven by agents:
 
-- Every command that prints data takes `--json`. Errors then print
-  `{"ok": false, "error": {"code", "message", "hint"}}`.
+- Every command that prints data takes `--json`. Every JSON reply has
+  `"api": 1`. Within api 1, fields are only added, never renamed or removed.
+  Errors print `{"ok": false, "api": 1, "error": {"code", "message", "hint"}}`.
 - Exit codes are stable: 0 ok, 1 error, 2 bad usage, 3 not found, 4 already
-  exists, 5 not running.
+  exists, 5 not running, 6 busy.
+- Exit 6 means another command held Leopard's lock for longer than
+  `LEOPARD_LOCK_WAIT` seconds (default 120). Retry it. No command waits forever for a lock.
 - `start` and `site create` are safe to retry. `site create` never adopts an
   existing folder or database, and a failed create removes what it made.
 - No command waits for input or runs forever, except `logs -f` and `shell`.
