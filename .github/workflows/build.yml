@@ -1,6 +1,8 @@
-# Builds and tests the single file for Linux x86_64 and aarch64 on every push
-# and pull request. Pushing a tag such as v0.1.0 also publishes a GitHub
-# release with both files and their checksums.
+# Builds and tests Leopard for Linux x86_64 and aarch64 on every push and
+# pull request. Packs (each PHP version, MySQL, and the core) build in
+# parallel. Then each single file is put together and tested. Pushing a tag
+# such as v0.2.0 also publishes a GitHub release with the files, the packs,
+# and their checksums. Files from a tag download other packs from that release.
 name: Build
 
 on:
@@ -10,29 +12,55 @@ on:
   pull_request:
   workflow_dispatch:
 
+env:
+  LEOPARD_RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+
 jobs:
-  build:
+  pack:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        pack: ['php 8.3', 'php 8.4', 'php 8.5', 'mysql 8.4', 'core']
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: if [ "${{ matrix.pack }}" = core ]; then ./build.sh core; else ./build.sh pack ${{ matrix.pack }}; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pack-${{ matrix.runner }}-${{ matrix.pack }}
+          path: |
+            dist/packs/*.tgz
+            dist/core-*.tgz
+          if-no-files-found: error
+
+  test:
+    needs: pack
     strategy:
       fail-fast: false
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
         php: ['8.3', '8.4', '8.5']
     runs-on: ${{ matrix.runner }}
-    env:
-      PHP_VERSION: ${{ matrix.php }}
     steps:
       - uses: actions/checkout@v4
-      - run: ./build.sh
-      - run: ./test.sh "dist/leopard-php$PHP_VERSION-linux-$(uname -m)"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pack-${{ matrix.runner }}-*
+          path: dist
+          merge-multiple: true
+      - run: ls -lR dist
+      - run: ./build.sh files
+      - run: ./test.sh "dist/leopard-php${{ matrix.php }}-linux-$(uname -m)"
       - uses: actions/upload-artifact@v4
         with:
           name: leopard-php${{ matrix.php }}-${{ matrix.runner }}
-          path: dist/leopard-*
+          path: dist/leopard-php${{ matrix.php }}-linux-*
           if-no-files-found: error
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: test
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -41,7 +69,11 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - run: cd dist && sha256sum leopard-* > SHA256SUMS
+      - run: |
+          cd dist
+          mv packs/*.tgz . 2>/dev/null || true
+          rm -rf packs core-*.tgz
+          sha256sum leopard-* *-linux-*.tgz > SHA256SUMS
       - env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes

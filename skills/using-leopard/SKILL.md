@@ -1,12 +1,13 @@
 ---
 name: using-leopard
-description: "Runs PHP sites (WordPress first) on Leopard, a single-file Apache, PHP, and MariaDB stack for Linux. Use when a task needs a local web server, a MySQL-compatible database, PHP, WP-CLI, or Composer without Docker, apt, or root, or when a machine already has a `leopard` command or a ~/.leopard folder."
+description: "Runs PHP sites (WordPress first) on Leopard, a single-file Apache, PHP, and MariaDB or MySQL stack for Linux, with a PHP version and Xdebug mode per site. Use when a task needs a local web server, a MySQL-compatible database, PHP, WP-CLI, or Composer without Docker, apt, or root, or when a machine already has a `leopard` command or a ~/.leopard folder."
 ---
 
 # Leopard
 
-Leopard is one file that holds Apache with mod_php, PHP, MariaDB, WP-CLI, and
-Composer. It changes nothing outside `$LEOPARD_HOME` (default `~/.leopard`;
+Leopard is one file that holds Apache, PHP (in PHP-FPM, one pool per site),
+MariaDB, WP-CLI, and Composer. Other PHP versions and MySQL come as packs from
+the same release. It changes nothing outside `$LEOPARD_HOME` (default `~/.leopard`;
 `/var/lib/leopard` as root), except `leopard service install`.
 
 ## Find or get Leopard
@@ -26,7 +27,8 @@ Builds exist for PHP 8.3, 8.4, and 8.5: change `php8.3` in the file name.
 leopard status --json
 ```
 
-Read ports, URLs, the database login, Xdebug mode, and sites from this output.
+Read ports, URLs, the database login, the default PHP and Xdebug mode, the
+running PHP-FPM masters, and each site's PHP and Xdebug from this output.
 Do not guess them, and do not read Leopard's config files. Settings persist:
 after the first `start`, every command uses the same ports and URL.
 
@@ -69,6 +71,40 @@ leopard site delete NAME --json
 - Without network access to wordpress.org, `create` uses the newest WordPress
   in the WP-CLI cache. Pass `--wp-version` to pick one.
 
+## PHP version and Xdebug per site
+
+```sh
+leopard site create NAME --php 8.3 --xdebug debug --json   # fetches PHP 8.3 if needed
+leopard site set NAME --php 8.5 --json                     # "changed": false if already so
+leopard site set NAME --xdebug default                     # follow `leopard xdebug`
+leopard site wp NAME ...     # WP-CLI on the site's PHP
+leopard site php NAME ...    # the site's PHP
+leopard php list --available --json
+```
+
+- A site without `--php` follows the default PHP (`leopard php default V`). A
+  site with `--php` is pinned to that exact build.
+- Switching drops no requests. Do it while tests run if you need to.
+- `--xdebug debug` starts a session only on requests with `XDEBUG_TRIGGER=1`.
+  Sites without Xdebug never load it. `leopard xdebug MODE` sets the default
+  for sites without their own mode, and for `leopard php` and `wp`.
+- Fetching needs the network. Offline, `pack_missing` or `download_failed` says
+  so; install a pack file with `leopard packs add FILE` instead.
+- `.htaccess` `php_value` lines do not work under PHP-FPM. Use `.user.ini`.
+
+## MySQL instead of MariaDB
+
+```sh
+leopard db use mysql-8.4 --copy-data --json   # copies every database
+leopard db use mariadb --json                 # back; MariaDB data is untouched
+leopard db list --available --json
+```
+
+One database server runs at a time, on the same port and socket, so sites keep
+working. Without `--copy-data`, the new engine starts empty, except the
+`wordpress` database and the `dev` user. `db prune ENGINE` deletes an inactive
+engine's data, so run it only when the user asks.
+
 ## Tools
 
 Use the bundled tools, not the system ones, so PHP and the database match:
@@ -96,18 +132,28 @@ unpacks the new version, runs the new servers, and refreshes the links in
 
 ```sh
 leopard doctor --json          # every check; exit 1 if one fails
-leopard logs php -n 100        # also apache, access, mariadb; -f follows
-leopard xdebug debug           # or coverage, profile, develop, off
+cur=$(leopard logs mark)       # before the step you want to check
+# ... run the request or test ...
+leopard logs --site NAME --since "$cur" --wait 5 --json
+leopard logs --kind php,fpm,web,db,access --since 10m --level error --json
 XDEBUG_MODE=coverage leopard shell -c 'vendor/bin/phpunit --coverage-text'
 ```
 
-`logs` prints and exits unless you pass `-f`. Xdebug is off by default.
+- `logs --json` returns `entries` (`time`, `site`, `kind`, `level`, `message`,
+  `file`) and a new `cursor`. Pass the cursor to the next call to get only
+  newer entries. `--wait N` waits up to N seconds for the first new entry.
+- With `--site`, you get that site's PHP errors and requests only.
+- `logs` prints and exits unless you pass `-f`. Xdebug is off by default.
+- When a server fails to start, the error has `log` and `log_tail`. Read them
+  before you retry.
+- If a server died, `leopard start` repairs it. `doctor` shows which one.
 
 ## Exit codes and errors
 
 0 ok, 1 error, 2 bad usage, 3 not found, 4 already exists, 5 not running,
 6 busy. With `--json`, every reply has `"api": 1`, and errors print
-`{"ok": false, "api": 1, "error": {"code", "message", "hint"}}`. Follow the `hint`.
+`{"ok": false, "api": 1, "error": {"code", "message", "hint", "retryable"}}`.
+Follow the `hint`. Retry when `retryable` is true.
 
 Exit 6 (`busy`) means another Leopard command held the lock for longer than
 `LEOPARD_LOCK_WAIT` seconds (default 120). It is safe to retry. A long
@@ -116,6 +162,9 @@ create several sites in parallel.
 
 ## Boot
 
+In a container with no init, run `leopard run` as the main process: it starts
+everything, restarts a server that dies, and stops all on SIGTERM.
+
 `leopard service install` adds a systemd unit that runs `leopard start` at
-boot. It is the only command that writes outside `$LEOPARD_HOME`, so run it only
+boot (`--run` uses `leopard run` and restarts it on failure). It is the only command that writes outside `$LEOPARD_HOME`, so run it only
 when the user asks for Leopard to survive reboots.

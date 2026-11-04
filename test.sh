@@ -1,9 +1,11 @@
 #!/bin/bash
 # Proves a built bundle works on bare Linux images that have no PHP, Apache,
 # MariaDB, or (on Alpine) glibc. Usage: ./test.sh dist/leopard-...
+# The packs next to it (dist/packs) stand in for the release downloads.
 # Docker is only the test harness here; the bundle itself never needs it.
 set -euo pipefail
 BIN=$(realpath "$1")
+PACKS=$(cd "$(dirname "$BIN")/packs" && pwd)
 SITE=$(mktemp -d)
 c=
 trap '[ -n "$c" ] && docker rm -f "$c" >/dev/null 2>&1; rm -rf "$SITE"' EXIT
@@ -11,7 +13,7 @@ cat >"$SITE/index.php" <<'EOF'
 <?php
 $db = new mysqli('localhost', 'dev', 'dev', 'wordpress');
 $missing = array_filter(['mysqli', 'pdo_mysql', 'gd', 'intl', 'mbstring', 'zip', 'curl', 'dom', 'exif', 'bcmath', 'Zend OPcache',
-  'xdebug', 'imagick', 'calendar', 'ftp', 'gettext', 'pcntl', 'shmop', 'sockets', 'sysvmsg', 'sysvsem', 'sysvshm', 'xsl', 'FFI'], fn($e) => !extension_loaded($e));
+  'imagick', 'calendar', 'ftp', 'gettext', 'pcntl', 'shmop', 'sockets', 'sysvmsg', 'sysvsem', 'sysvshm', 'xsl', 'FFI'], fn($e) => !extension_loaded($e));
 // ImageMagick loads its format coders at run time from the bundle.
 $im = new Imagick();
 $im->newImage(8, 8, 'red', 'png');
@@ -20,7 +22,7 @@ $im = new Imagick();
 $im->readImageBlob($png);
 $im->setImageFormat('webp');
 $imagick = strlen($im->getImageBlob()) > 0 ? 'ok' : 'broken';
-echo 'OK sapi=', PHP_SAPI, ' imagick=', $imagick, ' xdebug=', ini_get('xdebug.mode'), ' iconv=', var_export(iconv('UTF-8', 'ISO-8859-1', 'é') === "\xE9", true), ' uid=', posix_geteuid(), ' php=', PHP_VERSION, ' db=', $db->server_info, ' missing=[', implode(',', $missing), "]\n";
+echo 'OK sapi=', PHP_SAPI, ' imagick=', $imagick, ' xdebug=', extension_loaded('xdebug') ? 'loaded' : 'none', ' iconv=', var_export(iconv('UTF-8', 'ISO-8859-1', 'é') === "\xE9", true), ' uid=', posix_geteuid(), ' php=', PHP_VERSION, ' db=', $db->server_info, ' missing=[', implode(',', $missing), "]\n";
 EOF
 ms() { echo $(( ($(date +%s%N) - $1) / 1000000 )); }
 get='leopard php -r "echo file_get_contents(\"http://127.0.0.1:8080/\");"'
@@ -30,11 +32,11 @@ for image in alpine:3.20 debian:12-slim ubuntu:24.04; do
   c=$(docker run -d -v "$BIN:/usr/local/bin/leopard:ro" "$image" sleep infinity)
   docker exec -i "$c" sh -c 'mkdir /site && cat >/site/index.php' <"$SITE/index.php"
   t=$(date +%s%N); docker exec "$c" leopard start /site >/dev/null; echo "cold start (unpack + db + web): $(ms "$t") ms"
-  docker exec "$c" sh -c "$get" | grep '^OK' | grep 'sapi=apache2handler imagick=ok xdebug=off iconv=true uid=65534' | grep 'missing=\[\]'
+  docker exec "$c" sh -c "$get" | grep '^OK' | grep 'sapi=fpm-fcgi imagick=ok xdebug=none iconv=true uid=65534' | grep 'missing=\[\]'
   docker exec "$c" leopard start /site >/dev/null && echo "second start while running: ok"
   docker exec "$c" leopard stop
-  # A stale pid file that points at a live, unrelated process (PID 1).
-  docker exec "$c" sh -c 'echo 1 >/var/lib/leopard/run/mariadb.pid; echo 1 >/var/lib/leopard/run/apache.pid'
+  # A stale record that points at a live, unrelated process (PID 1).
+  docker exec "$c" sh -c 'echo "{\"web\":{\"pid\":1,\"start\":\"0\",\"port\":8080},\"db\":{\"pid\":1,\"start\":\"0\"},\"fpm\":{},\"pools\":{}}" >/var/lib/leopard/run/state.json'
   t=$(date +%s%N); docker exec "$c" leopard start /site >/dev/null; echo "warm start: $(ms "$t") ms"
   docker exec "$c" sh -c "$get" | grep -q '^OK' && echo "serves after restart: ok"
   docker rm -f "$c" >/dev/null
@@ -72,7 +74,7 @@ docker exec "$c" sh -ec '
 docker rm -f "$c" >/dev/null
 
 echo "== Agent contract on alpine:3.20"
-c=$(docker run -d -v "$BIN:/usr/local/bin/leopard:ro" "${cache[@]}" alpine:3.20 sleep infinity)
+c=$(docker run -d -v "$BIN:/usr/local/bin/leopard:ro" -v "$PACKS:/packs:ro" "${cache[@]}" alpine:3.20 sleep infinity)
 docker exec "$c" sh -ec '
   j() { leopard php -r "\$d = json_decode(stream_get_contents(STDIN), true); echo $1, PHP_EOL;"; }
   mkdir /www
@@ -181,6 +183,88 @@ docker exec "$c" sh -ec '
   leopard restart >/dev/null
   [ ! -e /var/lib/leopard/runtime/0123456789ab ] && [ -d /var/lib/leopard/runtime/keep-me ]
   echo "old runtimes removed: ok"
+  # A captured start returns: no server keeps the output pipe of the caller open.
+  out=$(timeout 30 leopard start --json) && [ -n "$out" ]
+  echo "captured start returns: ok"
+
+  # A master killed outright leaves workers behind; start clears them and heals.
+  m=$(leopard status --json | j "\$d[\"fpm\"][0][\"pid\"]")
+  kill -9 "$m"
+  leopard doctor >/dev/null 2>&1 && exit 1
+  leopard start >/dev/null
+  leopard php -r "echo file_get_contents(\"$url/wp-login.php\");" | grep -q user_login
+  echo "killed php-fpm master healed by start: ok"
+
+  # Per-site logs: a cursor, then only what came after it, from that site only.
+  cur=$(leopard logs mark)
+  printf "<?php trigger_error(\"only-gb\", E_USER_WARNING);" >/var/lib/leopard/sites/gb/w.php
+  printf "<?php trigger_error(\"only-root\", E_USER_WARNING);" >/www/w.php
+  leopard php -r "file_get_contents(\"$url/w.php\"); file_get_contents(\"http://127.0.0.1:8080/w.php\");"
+  leopard logs --site gb --kind php --since "$cur" --wait 5 --json >/tmp/l.json
+  [ "$(j "count(\$d[\"entries\"])" </tmp/l.json)" = 1 ] && j "\$d[\"entries\"][0][\"message\"]" </tmp/l.json | grep -q only-gb
+  echo "per-site logs since a cursor: ok"
+
+  # Another PHP for one site: fetched from the packs, checked, and pinned.
+  mine=$(leopard status --json | j "\$d[\"php\"][\"default\"]")
+  other=$(ls /packs | sed -n "s/^php-\\([0-9.]*\\)-linux-.*/\\1/p" | grep -v "^${mine%.*}\$" | head -1)
+  printf "<?php echo PHP_VERSION, \" \", function_exists(\"xdebug_info\") ? implode(\",\", xdebug_info(\"mode\")) : \"none\";" >/tmp/v.php
+  if [ -n "$other" ]; then
+    LEOPARD_PACKS_URL=file:///packs leopard site create v2 --php "$other" --json >/dev/null
+    cp /tmp/v.php /var/lib/leopard/sites/v2/v.php
+    leopard php -r "echo file_get_contents(\"http://127.0.0.1:8080/v2/v.php\");" | grep -q "^$other\."
+    [ "$(leopard site php v2 -r "echo PHP_MAJOR_VERSION, \".\", PHP_MINOR_VERSION;")" = "$other" ]
+    echo "per-site php $other next to $mine: ok"
+    leopard site delete v2 >/dev/null
+  fi
+  # A damaged pack is refused.
+  cp "$(ls /packs/php-*.tgz | head -1)" /tmp/bad.tgz && echo x >>/tmp/bad.tgz
+  set +e; leopard packs add /tmp/bad.tgz --json >/tmp/e.json; code=$?; set -e
+  [ $code = 1 ] && [ "$(j "\$d[\"error\"][\"code\"]" </tmp/e.json)" = verify_failed ]
+  echo "damaged pack refused: ok"
+
+  # Per-site Xdebug: one site debugs, the others never load Xdebug, and no
+  # request fails while sites switch back and forth.
+  cp /tmp/v.php /var/lib/leopard/sites/gb/v.php
+  cp /tmp/v.php /www/v.php
+  leopard php -r "\$n = 0; \$bad = 0; \$end = microtime(true) + 6; while (microtime(true) < \$end) { \$n++; if (@file_get_contents(\"$url/v.php\") === false) \$bad++; } echo \"\$n \$bad\", PHP_EOL;" >/tmp/load.out &
+  load=$!
+  for m in debug off develop debug; do leopard site set gb --xdebug $m >/dev/null; sleep 1; done
+  wait $load
+  read -r n bad </tmp/load.out
+  [ "$bad" = 0 ] && [ "$n" -gt 50 ]
+  echo "switch under load: $n requests, 0 failed: ok"
+  [ "$(leopard php -r "echo file_get_contents(\"$url/v.php\");")" = "$mine debug" ]
+  [ "$(leopard php -r "echo file_get_contents(\"http://127.0.0.1:8080/v.php\");")" = "$mine none" ]
+  # The debugger hears from the debug site only.
+  dbgp() { leopard php -r "\$s = stream_socket_server(\"tcp://127.0.0.1:9003\"); \$c = @stream_socket_accept(\$s, 3); echo \$c ? \"connected\" : \"none\";" >/tmp/dbgp.out & l=$!; sleep 0.5; leopard php -r "@file_get_contents(\"$1?XDEBUG_TRIGGER=1\", false, stream_context_create([\"http\" => [\"timeout\" => 2]]));"; wait $l; cat /tmp/dbgp.out; }
+  [ "$(dbgp "$url/v.php")" = connected ] && [ "$(dbgp http://127.0.0.1:8080/v.php)" = none ]
+  [ "$(leopard site set gb --xdebug debug --json | j "var_export(\$d[\"changed\"], true)")" = false ]
+  leopard site set gb --xdebug default >/dev/null
+  echo "per-site xdebug: ok"
+
+  # MySQL instead of MariaDB, with the data of the sites copied over, and back.
+  if ls /packs/mysql-*.tgz >/dev/null 2>&1; then
+    LEOPARD_PACKS_URL=file:///packs leopard db use mysql-8.4 --copy-data >/dev/null
+    [ "$(leopard mysql -N -e "select version()" | cut -c1-3)" = 8.4 ]
+    [ "$(leopard site wp gb option get home)" = "$url" ]
+    leopard php -r "echo file_get_contents(\"$url/wp-login.php\");" | grep -q user_login
+    leopard db use mariadb >/dev/null
+    leopard site wp gb plugin is-active hello
+    echo "db use mysql-8.4 --copy-data and back: ok"
+  fi
+
+  # leopard run: stays up, restarts a server that dies, stops all on SIGTERM.
+  leopard stop >/dev/null
+  leopard run >/tmp/run.log 2>&1 & run=$!
+  sleep 4
+  kill -9 "$(leopard status --json | j "\$d[\"web\"][\"pid\"]")"
+  sleep 4
+  leopard php -r "echo file_get_contents(\"$url/wp-login.php\");" | grep -q user_login
+  kill -TERM $run; wait $run
+  [ "$(leopard status --json | j "var_export(\$d[\"web\"][\"running\"], true)")" = false ]
+  echo "leopard run heals and stops: ok"
+  leopard start >/dev/null
+
   leopard doctor --json | j "\$d[\"ok\"] ? \"doctor: ok\" : \"doctor failed\"" | grep -x "doctor: ok"
   leopard stop --json | j "\$d[\"db\"][\"running\"] ? \"bad\" : \"stop --json: ok\""
 '
