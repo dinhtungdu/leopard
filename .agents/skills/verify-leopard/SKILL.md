@@ -16,12 +16,7 @@ Run `lv` by path: `L=.agents/skills/verify-leopard/scripts/lv`.
 
 Building needs Docker (`build.sh` copies PHP, Apache, and MariaDB out of official
 images). Driving uses it for isolation only. Check with `docker info`. In an Amp
-orb where the daemon is down:
-
-```sh
-sudo amp orb service start dockerd --command 'sudo dockerd'
-sudo chmod 666 /var/run/docker.sock
-```
+orb, `.agents/resume` starts the daemon. If it is down, run `.agents/resume`.
 
 ## 1. Build
 
@@ -109,8 +104,8 @@ only this distro as a non-root user, and may leave `/tmp/leopard-*` sockets.
 
 ## Gotchas
 
-- The orb's dockerd gives `docker exec` umask 0000, so files Leopard writes come out world-writable. The MariaDB client then ignores `conf/my.cnf` and `leopard mysql` cannot connect. `lv` sets umask 022. If you bypass `lv`, set it yourself.
-- A plugin folder named `hello` collides with WordPress's bundled Hello Dolly (`hello.php`). `site create` then activates Hello Dolly, and `plugin is-active hello` passes anyway. Give fixtures unique names such as `hello-leopard`.
+- The orb's dockerd gives `docker exec` umask 0000, unlike a user's shell. `lv` sets umask 022 so runs match a user. If you bypass `lv`, set it yourself. To test umask 000 on purpose, set it inside the command.
+- Assert which plugin is active by file (`plugin list --status=active --field=file`), not with `is-active NAME`. WordPress ships Hello Dolly as `hello.php`, so `is-active hello` passes whenever Hello Dolly is active.
 - `show databases like "a_b"` treats `_` as a wildcard. Match database names exactly.
 - `--host` sites listen on extra ports. With host networking they are reachable at `http://127.0.0.1:<port>`, but they can collide with services on this machine, so pass `--host=127.0.0.1:<free port>`.
 - When `leopard.sh` or `leopard.php` changes after `up`, `doctor` fails on staleness. Rebuild with `./build.sh files`, then `down` and `up`. `build.sh` rewrites the file in place, so the running container already sees the new bytes, but its servers still run the old runtime until `leopard restart`. To prove an upgrade path, that `restart` is the journey.

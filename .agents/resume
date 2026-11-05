@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# build.sh, test.sh, and the verify-leopard skill need a Docker daemon.
+# The orb has Docker installed but does not start it.
+set -euo pipefail
+docker info >/dev/null 2>&1 && exit 0
+# --group gives this user the socket without sudo or a new login.
+amp orb service start dockerd --command "sudo dockerd --group $(id -gn)" >/dev/null
+for _ in $(seq 40); do
+  docker info >/dev/null 2>&1 && exit 0
+  sleep 0.2
+done
+echo "dockerd did not start. See: amp orb service logs dockerd" >&2
+exit 1
