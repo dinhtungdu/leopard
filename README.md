@@ -135,7 +135,7 @@ Run `leopard help` for the full list. The main ones:
 - `config [set port|db_port|url VALUE]`
 - `service install [--run]|uninstall|status`. Starts Leopard at boot with
   systemd. With `--run`, systemd runs `leopard run` and restarts it if it fails.
-  This is the only command that writes outside `$LEOPARD_HOME`.
+  It writes outside `$LEOPARD_HOME`, as does `skill setup`. Nothing else does.
 - `php`, `wp`, `composer`, `mysql`, `shell`, `link`, `version`, `skill`
 
 Settings come from environment variables. `start` saves them, so later commands
@@ -171,9 +171,14 @@ Leopard is built to be driven by agents:
 - No command waits for input or runs forever, except `logs -f`, `shell`, and `run`.
 - PHP on the command line writes errors to stderr, so captured output stays clean.
 
-`leopard skill` prints [the agent guide](skills/using-leopard/SKILL.md). Install it
-where your agent reads skills, for example
-`mkdir -p ~/.agents/skills/using-leopard && leopard skill > ~/.agents/skills/using-leopard/SKILL.md`.
+`leopard skill` prints [the agent guide](skills/using-leopard/SKILL.md).
+`leopard skill setup` installs a small `using-leopard` skill into
+`~/.agents/skills` (Codex, Amp, Pi, OpenCode) and, if Claude Code is there,
+`~/.claude/skills`. The skill holds no guide text. It tells the agent to run
+`$LEOPARD_HOME/bin/leopard skill show`, so a newer Leopard updates the guide
+without another setup. `skill status` shows what is installed, and
+`skill remove` removes it. Setup never replaces a `using-leopard` skill it did
+not write (exit 4) unless you pass `--force`. `--dry-run` shows what would change.
 
 ## Running as root
 

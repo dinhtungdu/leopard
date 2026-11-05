@@ -269,6 +269,20 @@ docker exec "$c" sh -ec '
   echo "leopard run heals and stops: ok"
   leopard start >/dev/null
 
+  # skill setup: a stub that reads the guide from this Leopard; never replaces
+  # a skill it did not write unless --force; remove takes only its own.
+  sh_home=/tmp/skill-home; mkdir -p $sh_home/.claude $sh_home/.agents/skills/using-leopard
+  echo hand-written >$sh_home/.agents/skills/using-leopard/SKILL.md
+  set +e; HOME=$sh_home leopard skill setup >/dev/null 2>&1; code=$?; set -e
+  [ $code = 4 ] && grep -qx hand-written $sh_home/.agents/skills/using-leopard/SKILL.md
+  HOME=$sh_home leopard skill setup --force >/dev/null
+  [ "$(HOME=$sh_home leopard skill status --json | j "implode(\",\", array_column(\$d[\"skills\"], \"state\"))")" = installed,installed ]
+  stub_cmd=$(grep -o "\`[^\`]*skill show\`" $sh_home/.claude/skills/using-leopard/SKILL.md | tr -d "\`")
+  $stub_cmd | grep -q "^# Leopard"
+  HOME=$sh_home leopard skill remove >/dev/null
+  [ -z "$(find $sh_home/.agents/skills $sh_home/.claude/skills -mindepth 1)" ]
+  echo "skill setup, status, remove: ok"
+
   leopard doctor --json | j "\$d[\"ok\"] ? \"doctor: ok\" : \"doctor failed\"" | grep -x "doctor: ok"
   leopard stop --json | j "\$d[\"db\"][\"running\"] ? \"bad\" : \"stop --json: ok\""
 '

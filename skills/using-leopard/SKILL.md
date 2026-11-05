@@ -8,7 +8,8 @@ description: "Runs PHP sites (WordPress first) on Leopard, a single-file Apache,
 Leopard is one file that holds Apache, PHP (in PHP-FPM, one pool per site),
 MariaDB, WP-CLI, and Composer. Other PHP versions and MySQL come as packs from
 the same release. It changes nothing outside `$LEOPARD_HOME` (default `~/.leopard`;
-`/var/lib/leopard` as root), except `leopard service install`.
+`/var/lib/leopard` as root), except `leopard service install` and
+`leopard skill setup`.
 
 ## Find or get Leopard
 
@@ -166,5 +167,12 @@ In a container with no init, run `leopard run` as the main process: it starts
 everything, restarts a server that dies, and stops all on SIGTERM.
 
 `leopard service install` adds a systemd unit that runs `leopard start` at
-boot (`--run` uses `leopard run` and restarts it on failure). It is the only command that writes outside `$LEOPARD_HOME`, so run it only
+boot (`--run` uses `leopard run` and restarts it on failure). It writes outside `$LEOPARD_HOME`, so run it only
 when the user asks for Leopard to survive reboots.
+
+`leopard skill setup` installs a `using-leopard` skill into
+`~/.agents/skills` and `~/.claude/skills` that reads this guide from the
+installed Leopard. It also writes outside `$LEOPARD_HOME`, so run it only when
+the user asks. `skill status --json` lists each path with `state`: `missing`,
+`installed`, `outdated`, or `conflict` (a skill Leopard did not write; setup
+exits 4 unless `--force`).

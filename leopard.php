@@ -1919,6 +1919,91 @@ function runCmd(array $args): never
     exit(0);
 }
 
+// ---------------------------------------------------------------- agent skill
+
+// `skill setup` writes a short stub where agents look for skills. The stub
+// asks this Leopard for the guide, so a newer Leopard file updates what agents
+// read without another setup. Like `service install`, it writes outside
+// $LEOPARD_HOME, and only when asked.
+const SKILL_MARK = 'leopard-stub:';
+
+// The folders agents read skills from. Codex, Amp, Pi, and OpenCode share
+// ~/.agents/skills; Claude Code has its own.
+function skillTargets(): array
+{
+    $home = getenv('HOME');
+    $dirs = ["$home/.agents/skills"];
+    if (is_dir("$home/.claude")) $dirs[] = "$home/.claude/skills";
+    $byReal = [];
+    foreach ($dirs as $d) $byReal[realpath($d) ?: $d] ??= "$d/using-leopard";
+    return array_values($byReal);
+}
+
+function skillStub(): string
+{
+    global $H, $R;
+    preg_match('/^description:.*$/m', file_get_contents("$R/SKILL.md"), $m);
+    return "---\nname: using-leopard\n{$m[0]}\nmetadata:\n  " . SKILL_MARK . " \"1\"\n---\n"
+        . "<!-- Installed by \"leopard skill setup\". Remove it with \"leopard skill remove\". -->\n\n"
+        . "Run `$H/bin/leopard skill show` and follow the guide it prints. The guide\n"
+        . "comes from the installed Leopard, so it describes the commands that version has.\n\n"
+        . "If that file is missing, Leopard was moved or removed. Try `leopard skill show`.\n";
+}
+
+// missing, installed, outdated (an older stub), or conflict (not ours).
+function skillState(string $dir, string $stub): string
+{
+    $s = @file_get_contents("$dir/SKILL.md");
+    if ($s === false) return file_exists($dir) || is_link($dir) ? 'conflict' : 'missing';
+    if (!str_contains($s, SKILL_MARK)) return 'conflict';
+    return $s === $stub ? 'installed' : 'outdated';
+}
+
+function skillCmd(array $args): void
+{
+    global $H, $R;
+    [$pos, $f] = parseFlags($args, [], [], ['dry-run', 'force']);
+    $sub = $pos[0] ?? 'status';
+    if (count($pos) > 1 || !in_array($sub, ['status', 'setup', 'remove'], true)) {
+        throw new LeopardError('usage', 'Usage: leopard skill [show | status | setup [--dry-run] [--force] | remove [--dry-run]]', EXIT_USAGE);
+    }
+    $stub = skillStub();
+    $items = array_map(fn($d) => ['path' => $d, 'state' => skillState($d, $stub)], skillTargets());
+    $dry = isset($f['dry-run']);
+
+    if ($sub === 'setup') {
+        $conflicts = array_filter($items, fn($i) => $i['state'] === 'conflict');
+        if ($conflicts && !isset($f['force'])) {
+            throw new LeopardError('exists', 'A skill named using-leopard that Leopard did not install is already at ' . implode(', ', array_column($conflicts, 'path')) . '.',
+                EXIT_EXISTS, 'Pass --force to replace it with the stub.');
+        }
+        // The stub runs $H/bin/leopard. `leopard restart` keeps that link current.
+        if (!$dry && !is_link("$H/bin/leopard")) run(["$R/leopard", 'link'], null, false);
+        foreach ($items as &$i) {
+            $i['action'] = ['missing' => 'created', 'outdated' => 'updated', 'conflict' => 'replaced', 'installed' => 'unchanged'][$i['state']];
+            if ($dry || $i['action'] === 'unchanged') continue;
+            if ($i['state'] === 'conflict') run(['rm', '-rf', '--', $i['path']]);
+            @mkdir($i['path'], 0777, true);
+            writeAtomic("{$i['path']}/SKILL.md", $stub);
+            $i['state'] = 'installed';
+        }
+    } elseif ($sub === 'remove') {
+        foreach ($items as &$i) {
+            $ours = in_array($i['state'], ['installed', 'outdated'], true);
+            $i['action'] = $ours ? 'removed' : ($i['state'] === 'conflict' ? 'skipped: not installed by Leopard' : 'unchanged');
+            if ($dry || !$ours) continue;
+            unlink("{$i['path']}/SKILL.md");
+            @rmdir($i['path']);
+            $i['state'] = 'missing';
+        }
+    }
+    unset($i);
+    $text = ($dry ? "Dry run: nothing was changed.\n" : '')
+        . implode('', array_map(fn($i) => sprintf("%-10s %s%s\n", $i['state'], $i['path'], isset($i['action']) ? " ({$i['action']})" : ''), $items));
+    if ($sub === 'status' && in_array('conflict', array_column($items, 'state'), true)) $text .= "conflict: a skill there was not installed by Leopard. `leopard skill setup --force` replaces it.\n";
+    out(['skills' => $items, 'dry_run' => $dry], $text);
+}
+
 function main(array $args): void
 {
     prepare();
@@ -1939,6 +2024,7 @@ function main(array $args): void
         case 'packs': packsCmd($rest); return;
         case 'logs': logsCmd($rest); return;
         case 'db': dbCmd($rest); return;
+        case 'skill': skillCmd($rest); return;
         case 'run': runCmd($rest);
         case 'prepare': return;
         case 'version':

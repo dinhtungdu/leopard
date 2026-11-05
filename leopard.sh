@@ -2,7 +2,7 @@
 # Runtime launcher. Lives at the root of the unpacked bundle as ./leopard.
 # All state (database, config, sites, logs, pids) lives in $LEOPARD_HOME.
 # The tool shortcuts (php, wp, composer, mysql, shell) and the commands that
-# only touch files (link, service, skill) run here. Everything else runs in
+# only touch files (link, service, skill show) run here. Everything else runs in
 # leopard.php on the PHP that this Leopard file came with.
 # Exit codes: 0 ok, 1 error, 2 bad usage, 3 not found, 4 already exists,
 # 5 server not running, 6 busy.
@@ -51,8 +51,8 @@ link() {
   esac
 }
 
-# Start at boot with systemd. Only on request: this is the one command that
-# writes outside $LEOPARD_HOME (a systemd unit file). With --run, systemd
+# Start at boot with systemd. Only on request: with `skill setup`, it is one of
+# two commands that write outside $LEOPARD_HOME (a systemd unit file). With --run, systemd
 # runs `leopard run` and restarts it if it fails.
 service() {
   command -v systemctl >/dev/null || die 1 "systemd is not available here."
@@ -126,8 +126,7 @@ Server
   config [set KEY V]  Show settings, or save port, db_port, or url (the base URL
                       that browsers use, like http://100.1.2.3:8080)
   service install [--run] | uninstall | status
-                      Start at boot with systemd. The only command that writes
-                      outside \$LEOPARD_HOME.
+                      Start at boot with systemd. Writes outside \$LEOPARD_HOME.
 
 Sites (WordPress, served at <url>/<name>)
   site create NAME [--php VERSION] [--xdebug MODE] [--dir PATH]
@@ -150,7 +149,11 @@ Tools (bundled)
                       and leopard first on PATH
   link [dir]          Link those tools into dir (default: \$LEOPARD_HOME/bin)
   version             Versions of Apache, PHP, and the database
-  skill               Print the guide for AI agents (SKILL.md)
+  skill [show]        Print the guide for AI agents (SKILL.md)
+  skill setup [--dry-run] [--force] | status | remove
+                      Install a small skill into ~/.agents/skills (and
+                      ~/.claude/skills) that reads the guide from this Leopard.
+                      Writes outside \$LEOPARD_HOME, like service install.
 
 Settings come from the environment first, then from earlier runs:
   LEOPARD_HOME ($H)
@@ -182,7 +185,7 @@ case $cmd in
   # Linked tools run without the launcher, so write their settings now.
   link) (control prepare); link "${1:-}" ;;
   service) service "$@" ;;
-  skill) cat "$R/SKILL.md" ;;
+  skill) case ${1:-show} in show) cat "$R/SKILL.md" ;; *) control skill "$@" ;; esac ;;
   help | -h | --help) usage ;;
   *) control "$cmd" "$@" ;;
 esac
