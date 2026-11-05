@@ -1,211 +1,129 @@
 # Leopard
 
-Apache, PHP, and MariaDB in one file. Copy it to a Linux machine or container,
-run it, and you have a PHP server with a database. It installs nothing on the
-machine. There is no apt, no Docker, and no setup script.
+**A WordPress dev stack in one file.** Apache, PHP, MariaDB, WP-CLI, and
+Composer, ready in seconds on any Linux machine. No Docker, no apt, no root.
 
 ```sh
-curl -fLo leopard https://github.com/dinhtungdu/leopard/releases/latest/download/leopard-php8.3-linux-$(uname -m)
-chmod +x leopard
-./leopard start /path/to/docroot   # defaults to the current directory
+curl -fsSL https://raw.githubusercontent.com/dinhtungdu/leopard/main/install.sh | sh
 ```
-
-Files exist for PHP 8.3, 8.4, and 8.5 on x86_64 and aarch64 (ARM64) Linux:
-change `php8.3` in the URL. The PHP in the file is the default. Any file can
-add the other PHP versions and MySQL later (see below). Each release also lists
-the SHA-256 sums of its files and packs in `SHA256SUMS`.
-
-The first start unpacks the file into `~/.leopard` and takes about 2.5 seconds.
-Later starts take under a second.
-
-## Use php, wp, composer, and mysql as plain commands
-
-Leopard changes nothing on the system by default. The quickest way:
-
-```sh
-./leopard-php8.3-linux-x86_64 shell
-php -v; wp --info; composer install; mysql
-exit                                       # back to your normal shell
-```
-
-`leopard shell` opens your usual shell (`$SHELL`) with `php`, `wp`, `composer`,
-`mysql`, `mysqladmin`, `mysqldump`, and `leopard` first on PATH. Only that shell sees them. It also sets
-`LEOPARD_SHELL=1`, which a prompt can show. `leopard shell -c 'wp plugin list'`
-runs one command the same way.
-
-To use the commands from your own shell instead:
-
-```sh
-./leopard-php8.3-linux-x86_64 link
-export PATH="$HOME/.leopard/bin:$PATH"     # as root: /var/lib/leopard/bin
-php -v; wp --info; composer install; mysql
-```
-
-`link` puts `leopard`, `php`, `wp`, `composer`, `mysql`, `mysqladmin`, and
-`mysqldump` in `~/.leopard/bin`
-(`/var/lib/leopard/bin` as root). That folder belongs to Leopard, and the `export`
-affects only the current shell. If you want the commands everywhere, name a folder
-yourself, for example `leopard link /usr/local/bin`. `link` never replaces a
-tool that the system installed.
-
-Without linking, `leopard php`, `leopard wp`, `leopard composer`, and
-`leopard mysql` work the same way.
-
-## WordPress sites
 
 ```sh
 leopard start
-leopard site create shop --plugin ~/code/my-plugin --activate my-plugin
-# url: http://localhost:8080/shop/  admin: admin / password
-leopard site wp shop plugin list
-leopard site delete shop
+leopard site create mysite
 ```
 
-Each site gets its own folder (`~/.leopard/sites/<name>`, or `--dir`), its own
-database, and the URL `<url>/<name>/` with pretty permalinks. `--plugin`
-symlinks a checkout, so edits show up right away. To start from a snapshot,
-use `--import-sql dump.sql [--content wp-content.zip]`; Leopard rewrites the
-URLs and sets the admin password. `site delete` removes only sites that
-`site create` made, and never touches the linked checkouts.
+Open http://localhost:8080/mysite/ and log in as `admin` / `password`.
+http://localhost:8080/ lists every site.
 
-If the browser reaches the machine at another address, save it once:
-`LEOPARD_URL=http://100.1.2.3:8080 leopard start`.
+## Why Leopard
 
-For Laravel, serve the `public` folder: `leopard start public`.
+- **Fast.** Install is one download. The first start takes about 2.5 seconds, later
+  starts under one.
+- **Self-contained.** Everything lives in `~/.leopard`, plus the `leopard` command.
+  The system PHP, Apache, and MySQL stay untouched. Runs on any distro, Alpine included.
+- **Built for agents.** Every command speaks JSON, exits with a stable code, and
+  never waits for input. One command teaches your coding agent to use it.
 
-## PHP versions, Xdebug, and MySQL per site
+## Develop a plugin
 
-Each site can run its own PHP version and its own Xdebug mode, side by side:
+Link your checkout into a site. Edits show up on the next page load.
 
 ```sh
-leopard site create old --php 8.3          # downloads PHP 8.3 the first time
-leopard site set old --php 8.5 --xdebug debug
-leopard site set old --xdebug default      # back to the default (off)
-leopard site wp old eval 'echo PHP_VERSION;'   # WP-CLI runs on the site's PHP too
-leopard php list --available | php install 8.4 | php default 8.4
+leopard site create dev --plugin ~/code/my-plugin --activate my-plugin
+leopard site wp dev plugin list          # WP-CLI, already pointed at the site
+leopard logs --site dev                  # this site's errors and requests
 ```
 
-Switching takes a moment and drops no requests. A site with Xdebug in debug
-mode starts a session on a request with `XDEBUG_TRIGGER=1` (or the browser
-helper's cookie). Sites without Xdebug never load it, so they stay fast.
-
-The database is MariaDB by default. To use MySQL instead:
+Start from a copy of a real site instead of a fresh install:
 
 ```sh
-leopard db use mysql-8.4 --copy-data      # copies every database over
-leopard db use mariadb                    # back; the MariaDB data is untouched
+leopard site create shop --import-sql shop.sql --content wp-content.zip
 ```
 
-Each engine keeps its own data folder. Sites keep working, because they
-connect through a socket that stays the same.
+Leopard rewrites the URLs in the dump and sets the admin password to `password`.
 
-Extra versions come as packs from the same GitHub release as the file, and
-Leopard checks each one against the SHA-256 that the file lists. Offline, use
-`leopard packs add FILE` with a pack downloaded elsewhere. `leopard packs gc`
-deletes packs that nothing uses.
+## Use it with AI agents
 
-## What you get
+```sh
+leopard skill setup
+```
 
-| Part | Details |
+This gives Claude Code, Codex, Amp, OpenCode, and Pi a `using-leopard` skill. The
+skill reads its guide from your installed Leopard, so it stays current when you
+upgrade. Agents then get:
+
+| | |
 | --- | --- |
-| Web | Apache 2.4 (event MPM) with mod_rewrite and `.htaccess` (AllowOverride All) on port 8080. PHP runs in PHP-FPM, one pool per site. |
-| PHP | Upstream PHP with mysqli, pdo_mysql, gd, imagick, intl, mbstring, zip, curl, xml, xsl, exif, bcmath, sqlite, opcache, xdebug, and more |
-| Database | MariaDB (or MySQL 8.4) on 127.0.0.1:3306. User `dev`, password `dev`, full rights. A `wordpress` database already exists. `root` has no password. |
-| Tools | `php`, `wp` (WP-CLI), `composer`, `mysql`, `mysqladmin`, `mysqldump`, after `leopard link` or in `leopard shell` |
+| JSON everywhere | `--json` on every command. Each reply has `"api": 1`; fields are only ever added. |
+| Clear errors | `{"ok": false, "error": {"code", "message", "hint", "retryable"}}`, plus the server log tail when a server fails to start. |
+| Stable exit codes | 0 ok, 1 error, 2 bad usage, 3 not found, 4 already exists, 5 not running, 6 busy. |
+| Safe retries | `start` and `site create` can run again. A failed `site create` removes what it made. |
+| Precise logs | `cur=$(leopard logs mark)`, run a test, then `leopard logs --site dev --since "$cur" --json`. |
+| No hangs | Nothing waits for input. A busy lock exits 6 after `LEOPARD_LOCK_WAIT` seconds (default 120). |
 
-Run `leopard version` for exact versions.
+## Everyday commands
 
-PHP runs in PHP-FPM, not inside Apache, so `php_value` and `php_flag` lines in
-`.htaccess` do not work. Put those settings in a `.user.ini` file in the site
-folder. `leopard doctor` warns about sites that have them.
+| Command | What it does |
+| --- | --- |
+| `leopard start` / `stop` / `restart` | Run the stack. `start` also repairs anything that died. |
+| `leopard status` | Ports, URLs, database login, and each site's PHP and Xdebug. |
+| `leopard site create NAME` | A WordPress site at `<url>/NAME/`, with its own folder and database. |
+| `leopard site list` / `info` / `delete` | Manage sites. `delete` never touches linked checkouts. |
+| `leopard site set NAME --php 8.4` | Switch one site's PHP. No request fails during the switch. |
+| `leopard site set NAME --xdebug debug` | Xdebug for one site. Other sites never load it. |
+| `leopard site wp NAME ...` | WP-CLI for that site, on its PHP. |
+| `leopard logs` | PHP, web, and database logs. `-f` follows them. |
+| `leopard doctor` | Check every server and site. |
+| `leopard shell` | A shell with `php`, `wp`, `composer`, and `mysql` on PATH. |
 
-## Commands
+`leopard help` lists everything.
 
-Run `leopard help` for the full list. The main ones:
+## Settings
 
-- `start [docroot]`, `stop`, `restart`, `status`, `doctor`
-- `run`: start, then stay in the foreground and restart any server that dies.
-  For containers (`CMD ["leopard", "run"]`) and systemd.
-- `site create|list|info|path|set|delete|wp|php`
-- `logs [--site NAME] [--kind php,access,fpm,web,db] [--since 10m|ISO|CURSOR] [--wait N] [-n N] [-f]`,
-  and `logs mark`. Prints and exits unless `-f`.
-- `xdebug [off|debug|develop|coverage|profile|trace]`: the default for sites
-  without their own mode. Off by default. For one command, set `XDEBUG_MODE`.
-- `php list|install|default`, `db list|use|prune`, `packs list|add|gc`
-- `config [set port|db_port|url VALUE]`
-- `service install [--run]|uninstall|status`. Starts Leopard at boot with
-  systemd. With `--run`, systemd runs `leopard run` and restarts it if it fails.
-  It writes outside `$LEOPARD_HOME`, as does `skill setup`. Nothing else does.
-- `php`, `wp`, `composer`, `mysql`, `shell`, `link`, `version`, `skill`
+| Setting | Default | Change it |
+| --- | --- | --- |
+| Web port | 8080 | `leopard config set port 8081` |
+| Database port | 3306 | `leopard config set db_port 3307` |
+| Base URL | `http://localhost:<port>` | `leopard config set url http://100.1.2.3:8080` |
 
-Settings come from environment variables. `start` saves them, so later commands
-use the same values without the variables:
+Run `leopard restart` after a change. On a remote machine or VM, set the base URL to
+the address your browser uses: site URLs are built from it.
 
-- `LEOPARD_HOME` sets where data, config, sites, and logs live. The default is `~/.leopard`.
-- `LEOPARD_PORT` sets the web port. The default is 8080.
-- `LEOPARD_DB_PORT` sets the database port. The default is 3306.
-- `LEOPARD_URL` sets the base URL that browsers use. The default is `http://localhost:<port>`.
-- `LEOPARD_LOCK_WAIT` sets how many seconds a command waits for another one before it exits 6. The default is 120. It is not saved.
+Database login for apps and tests: host `127.0.0.1`, user `dev`, password `dev`.
+`leopard mysql` logs in as root.
 
-To run two stacks side by side, give each its own `LEOPARD_HOME` and ports.
+## More
 
-## For AI agents
+**PHP versions.** The installer's PHP (8.3 by default) is the default. Sites can use
+8.3, 8.4, or 8.5 side by side: `leopard site create old --php 8.4` downloads it the
+first time. Pick the default at install with `LEOPARD_PHP=8.5`.
 
-Leopard is built to be driven by agents:
+**MySQL.** MariaDB is the default. `leopard db use mysql-8.4 --copy-data` switches
+and copies every database. `leopard db use mariadb` switches back.
 
-- Every command that prints data takes `--json`. Every JSON reply has
-  `"api": 1`. Within api 1, fields are only added, never renamed or removed.
-  Errors print `{"ok": false, "api": 1, "error": {"code", "message", "hint", "retryable"}}`.
-  When a server fails to start, the error also has `log` and `log_tail`.
-- Exit codes are stable: 0 ok, 1 error, 2 bad usage, 3 not found, 4 already
-  exists, 5 not running, 6 busy.
-- Exit 6 means another command held Leopard's lock for longer than
-  `LEOPARD_LOCK_WAIT` seconds (default 120). Retry it. No command waits forever for a lock.
-- `start` and `site create` are safe to retry. `site create` never adopts an
-  existing folder or database, and a failed create removes what it made.
-  Commands that change settings return `"changed": true|false`.
-- `start` repairs anything that died, even after `kill -9`.
-- `logs mark` returns a cursor. Run a test, then `logs --site NAME --since CURSOR --json`
-  returns exactly what that site logged since, as entries with `time`, `kind`,
-  `level`, and `message`. `--wait N` waits up to N seconds for the first one.
-- No command waits for input or runs forever, except `logs -f`, `shell`, and `run`.
-- PHP on the command line writes errors to stderr, so captured output stays clean.
+**Your own app.** Serve any folder at `/`: `leopard start ~/code/app/public`.
 
-`leopard skill` prints [the agent guide](skills/using-leopard/SKILL.md).
-`leopard skill setup` installs a small `using-leopard` skill into
-`~/.agents/skills` (Codex, Amp, Pi, OpenCode) and, if Claude Code is there,
-`~/.claude/skills`. The skill holds no guide text. It tells the agent to run
-`$LEOPARD_HOME/bin/leopard skill show`, so a newer Leopard updates the guide
-without another setup. `skill status` shows what is installed, and
-`skill remove` removes it. Setup never replaces a `using-leopard` skill it did
-not write (exit 4) unless you pass `--force`. `--dry-run` shows what would change.
+**Start at boot.** `leopard service install` adds a systemd unit. In a container
+with no init, run `leopard run` as the main process.
 
-## Running as root
+**Upgrade.** Run the install line again. A running Leopard restarts on the new version.
 
-Apache and PHP-FPM refuse to serve pages as root. When you start Leopard as
-root, each site's PHP runs as the owner of its folder. If root owns the folder,
-it runs as `nobody` (uid 65534). WordPress then cannot write uploads or install plugins
-until you run `chown -R 65534:65534 <docroot>`. Starting as a normal user avoids this.
+**Uninstall.** `leopard stop`, then `rm -rf ~/.leopard ~/.local/bin/leopard`
+(as root: `/var/lib/leopard` and `/usr/local/bin/leopard`).
 
-## Build
+**Limits.** Linux only (x86_64 and aarch64); on macOS or Windows, use a VM or WSL2. No
+multisite or HTTPS yet. `php_value` lines in `.htaccess` do not work under PHP-FPM;
+use `.user.ini`. As root, sites run as the owner of their folder.
+
+## Build from source
 
 ```sh
-./build.sh                               # PHP 8.3 by default
-PHP_VERSIONS="8.3 8.5" ./build.sh        # one file per version
-./build.sh pack mysql 8.4                # a MySQL pack
-./test.sh dist/leopard-php8.3-linux-aarch64
+./build.sh                                  # PHP 8.3; needs Docker on the build machine only
+PHP_VERSIONS="8.3 8.5" ./build.sh           # one file per PHP version
+./test.sh dist/leopard-php8.3-linux-$(uname -m)
 ```
 
-The build needs Docker on the build machine only. It makes packs: PHP from the
-official `php:<version>-fpm` image, MySQL from `mysql:<version>`, and a core with
-Apache and MariaDB from Debian. Each pack holds its binaries, every shared
-library they load, and the glibc loader. A file is the core plus one PHP pack,
-and it lists every pack built with it and its SHA-256. Each binary runs through that bundled loader, so the bundle runs
-on any Linux distro (Alpine with musl included) with the same CPU arch. The output
-matches the build machine's arch. Build on x86_64 to get an x86_64 file.
-
-`test.sh` starts bare Alpine, Debian, and Ubuntu containers. In each one it checks
-cold and warm start, PHP to MariaDB through Apache, the PHP extensions, and
-restarts. It then installs WordPress by hand, and checks the agent contract:
-JSON output, exit codes, the full site lifecycle, per-site PHP and Xdebug,
-switching under load, log cursors, MySQL, and repair after `kill -9`.
+The build packs official PHP and MySQL images and Debian's Apache and MariaDB,
+with every library they load and their own glibc loader, so the file runs on any
+Linux with the same CPU. `test.sh` proves it on bare Alpine, Debian, and Ubuntu,
+and checks the agent contract end to end.
