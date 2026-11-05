@@ -1319,7 +1319,9 @@ function httpGet(string $url): ?int
 
 // Parses `--flag value` and repeatable flags. Flags in $multi collect arrays.
 // Flags in $bool take no value.
-function parseFlags(array $args, array $known, array $multi = [], array $bool = []): array
+// $optional flags take a value only after "=" (--host or --host=VALUE), so
+// the next word stays a positional argument.
+function parseFlags(array $args, array $known, array $multi = [], array $bool = [], array $optional = []): array
 {
     $flags = array_fill_keys($multi, []);
     $positional = [];
@@ -1334,6 +1336,10 @@ function parseFlags(array $args, array $known, array $multi = [], array $bool = 
         if (str_contains($key, '=')) [$key, $value] = explode('=', $key, 2);
         if (in_array($key, $bool, true)) {
             $flags[$key] = true;
+            continue;
+        }
+        if (in_array($key, $optional, true)) {
+            $flags[$key] = $value ?? true;
             continue;
         }
         if (!in_array($key, $known, true) && !in_array($key, $multi, true)) {
@@ -1383,8 +1389,11 @@ function wpPackage(string $dir): ?array
 function siteCreate(array $args): void
 {
     global $H, $sock;
-    [$pos, $f] = parseFlags($args, ['dir', 'title', 'wp-version', 'import-sql', 'content', 'from-url', 'admin-user', 'admin-password', 'admin-email', 'php', 'xdebug', 'theme', 'port'], ['plugin', 'activate']);
-    if (count($pos) > 1) throw new LeopardError('usage', 'Usage: leopard site create [NAME] [options]. See `leopard help`.', EXIT_USAGE);
+    [$pos, $f] = parseFlags($args, ['dir', 'title', 'wp-version', 'import-sql', 'content', 'from-url', 'admin-user', 'admin-password', 'admin-email', 'php', 'xdebug', 'theme'], ['plugin', 'activate'], [], ['host']);
+    if (count($pos) > 1) {
+        throw new LeopardError('usage', 'Usage: leopard site create [NAME] [options]. See `leopard help`.', EXIT_USAGE,
+            isset($f['host']) ? 'Give --host its value after "=", like --host=localhost:8090.' : null);
+    }
     // No name inside a plugin or theme folder: the site takes the folder's
     // name, and the folder is linked and activated.
     if (!$pos) {
@@ -1404,15 +1413,14 @@ function siteCreate(array $args): void
     if (!str_starts_with($dir, '/')) $dir = getcwd() . "/$dir";
     $dir = rtrim($dir, '/');
     if ($dir === '') throw new LeopardError('usage', '--dir cannot be /', EXIT_USAGE);
-    $sitePort = null;
-    if (isset($f['port'])) {
-        $sitePort = (int) $f['port'];
-        if ((string) $sitePort !== $f['port'] || $sitePort < 1 || $sitePort > 65535) throw new LeopardError('usage', "--port needs a port number: {$f['port']}", EXIT_USAGE);
-    }
-    $url = cfg()['url'] . "/$name";
-    if ($sitePort) {
-        $u = parse_url(cfg()['url']);
-        $url = "{$u['scheme']}://{$u['host']}:$sitePort";
+    // --host gives the site a host of its own: --host=HOST:PORT, or --host
+    // alone for the base URL's host and a free port. Names on Leopard's own
+    // port (shop.test) come later.
+    $host = $f['host'] ?? null;
+    if (is_string($host) && !preg_match('/^[A-Za-z0-9.-]+:\d{1,5}$/', $host)) {
+        throw new LeopardError('usage', preg_match('/^[A-Za-z0-9.-]+$/', $host)
+            ? "--host needs a port for now, like $host:8090. Names without a port come later."
+            : "--host takes a host like localhost:8090, not a URL: $host", EXIT_USAGE, 'Or use --host alone, and Leopard picks a free port.');
     }
     $adminUser = $f['admin-user'] ?? 'admin';
     $adminPassword = $f['admin-password'] ?? 'password';
@@ -1446,13 +1454,32 @@ function siteCreate(array $args): void
     if (file_exists($dir) || is_link($dir)) throw new LeopardError('exists', "Folder already exists: $dir", EXIT_EXISTS, 'Leopard never adopts an existing folder. Pick another --dir.');
     // A first `site create` starts the stack, so it works on its own.
     if (!alive(loadState()['web'] ?? null)) startStack(docroot());
-    if ($sitePort) {
-        $c = cfg();
-        $taken = array_filter(allSites(), fn($s) => ($s['port'] ?? null) === $sitePort);
+    $c = cfg();
+    $base = parse_url($c['url']);
+    $url = "{$c['url']}/$name";
+    $sitePort = null;
+    if ($host !== null) {
         // A reload with a port Apache cannot take would stop every site.
-        if ($sitePort === $c['port'] || $sitePort === $c['db_port'] || $taken || !portFree('0.0.0.0', $sitePort)) {
-            throw new LeopardError('port_in_use', "Port $sitePort is in use" . ($taken ? ' by site ' . reset($taken)['name'] : '') . ', or not allowed.', EXIT_EXISTS, 'Pick another --port.');
+        $sitePorts = array_column(allSites(), 'name', 'port');
+        $owner = function (int $p) use ($c, $base, $sitePorts): ?string {
+            if ($p === $c['port'] || $p === ($base['port'] ?? null)) return "Leopard's main address";
+            if ($p === $c['db_port']) return 'the database';
+            if (isset($sitePorts[$p])) return "site {$sitePorts[$p]}";
+            return portFree('0.0.0.0', $p) ? null : 'another program';
+        };
+        if ($host === true) {
+            for ($p = $c['port'] + 1; $p <= $c['port'] + 100 && $owner($p); $p++);
+            if ($p > $c['port'] + 100) throw new LeopardError('port_in_use', sprintf('No free port from %d to %d.', $c['port'] + 1, $c['port'] + 100), EXIT_EXISTS, "Give one: --host={$base['host']}:PORT.");
+            $host = "{$base['host']}:$p";
         }
+        [$hostName, $sitePort] = explode(':', $host);
+        $sitePort = (int) $sitePort;
+        if ($sitePort < 1 || $sitePort > 65535) throw new LeopardError('usage', "Not a port: $sitePort", EXIT_USAGE);
+        if ($who = $owner($sitePort)) {
+            throw new LeopardError('port_in_use', "Port $sitePort is used by $who.", EXIT_EXISTS,
+                $who === "Leopard's main address" ? 'Leave out --host to put the site in a folder there.' : 'Use --host alone, and Leopard picks a free port.');
+        }
+        $url = "{$base['scheme']}://$hostName:$sitePort";
     }
     $db = db();
     if (dbExists($db, $name)) throw new LeopardError('exists', "Database already exists: $name", EXIT_EXISTS, 'Leopard never adopts an existing database.');

@@ -315,17 +315,25 @@ docker exec "$c" sh -ec '
   [ -f /code/hello-plugin/hello-plugin.php ] && [ -f /code/hello-theme/style.css ]
   echo "site create in a plugin or theme folder: ok"
 
-  # --port: the site at the root of its own port, with pretty permalinks and
-  # its own log tag. A taken port is refused before Apache could fail on it.
-  leopard site create rooty --port 8091 --json | j "\$d[\"site\"][\"url\"]" | grep -qx http://127.0.0.1:8091
+  # --host: a host of its own. Alone, the base host and the next free port;
+  # with a value, that host. Taken ports, URLs, and a value after a space are
+  # refused before Apache could fail on them.
+  web=$(leopard status --json | j "\$d[\"web\"][\"port\"]"); free=$((web + 1))
+  leopard site create rooty --host --json | j "\$d[\"site\"][\"url\"]" | grep -qx "http://127.0.0.1:$free"
   leopard site wp rooty post create --post_title=PortPost --post_status=publish >/dev/null
-  leopard php -r "echo file_get_contents(\"http://127.0.0.1:8091/portpost/\");" | grep -q PortPost
+  leopard php -r "echo file_get_contents(\"http://127.0.0.1:$free/portpost/\");" | grep -q PortPost
   leopard logs --site rooty --kind access --json | grep -q portpost
-  set +e; leopard site create other --port 8091 >/dev/null 2>&1; a=$?; leopard site create other --port "$(leopard status --json | j "\$d[\"web\"][\"port\"]")" >/dev/null 2>&1; b=$?; set -e
-  [ "$a $b" = "4 4" ]
-  leopard site delete rooty >/dev/null
+  leopard site create picked --host=localhost:8092 --json | j "\$d[\"site\"][\"url\"]" | grep -qx http://localhost:8092
+  leopard php -r "echo file_get_contents(\"http://127.0.0.1:8092/wp-login.php\");" | grep -q user_login
+  codes=""
+  for h in "--host=127.0.0.1:$free" "--host=127.0.0.1:$web" "--host=http://127.0.0.1:8093" "--host=shop.test"; do
+    set +e; leopard site create other "$h" >/dev/null 2>&1; codes="$codes $?"; set -e
+  done
+  set +e; leopard site create other --host 127.0.0.1:8093 >/dev/null 2>&1; codes="$codes $?"; set -e
+  [ "$codes" = " 4 4 2 2 2" ]
+  leopard site delete rooty >/dev/null; leopard site delete picked >/dev/null
   leopard php -r "echo file_get_contents(\"${url%/gb}/gb/wp-login.php\");" | grep -q user_login
-  echo "site on its own port: ok"
+  echo "site with its own host: ok"
 
   # skill setup: a stub that reads the guide from this Leopard; never replaces
   # a skill it did not write unless --force; remove takes only its own.

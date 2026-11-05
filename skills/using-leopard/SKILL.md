@@ -54,7 +54,7 @@ LEOPARD_PORT=8082 LEOPARD_DB_PORT=3307 LEOPARD_URL=http://<host-ip>:8082 leopard
 cd /path/to/plugin-or-theme && leopard site create --json   # named after the folder
 leopard site create NAME --plugin /path/to/plugin-checkout --activate plugin-slug --json
 leopard site create NAME --theme /path/to/theme-checkout --json
-leopard site create NAME --port 8090 --json            # at http://<host>:8090/, not <url>/NAME/
+leopard site create NAME --host --json                 # own host: http://<host>:<free port>/
 leopard site create NAME --import-sql db.sql --content wp-content.zip --json
 leopard site list --json
 leopard site info NAME --json
@@ -70,10 +70,12 @@ leopard site delete NAME --json
   The site takes the folder's name, and the folder is linked and activated.
   Elsewhere, no NAME is exit 2. The folder name must be a valid site name.
 - `create` starts the stack if it is not running.
-- `--port PORT` serves the site at the root of its own port, on the same host
-  as the base URL. Use it for code that breaks under a subfolder. The port must
-  be free and not used by Leopard or another site, or `create` exits 4 with
-  `port_in_use`. Read the address from `url`; `port` is null for a path site.
+- A site is in a folder of the base URL, or has a host of its own with
+  `--host`. Alone, `--host` takes the base URL's host and the first free port
+  above the web port. `--host=HOST:PORT` picks it; the value goes after `=`.
+  A host needs a port for now. A port that Leopard, the database, another
+  site, or another program uses exits 4 with `port_in_use`. A URL or a path is
+  exit 2. Read the address from `url`; `port` is null for a folder site.
 - `--plugin [SLUG=]PATH` symlinks a checkout into `wp-content/plugins`. It never
   copies it. Repeat it for several plugins. `--activate SLUG` activates one.
   `--theme [SLUG=]PATH` symlinks a theme into `wp-content/themes` and activates it.
