@@ -554,7 +554,9 @@ function prepare(): void
     // The MariaDB client reads $MYSQL_HOME/my.cnf, so plain `mysql` logs in as
     // root. The server listens only on 127.0.0.1, so skip the TLS certificate
     // check that MariaDB 11 clients warn about on every import and dump.
+    // The client skips a world-writable file, which a umask of 000 would make.
     writeIfChanged("$H/conf/my.cnf", "[client]\nuser = root\nsocket = \"$sock\"\nskip-ssl-verify-server-cert\n");
+    chmod("$H/conf/my.cnf", 0644);
     // WP-CLI cannot see Apache's modules from the command line. Tell it about
     // mod_rewrite so `wp rewrite flush --hard` writes .htaccess. Keep the
     // user's own global WP-CLI config.
@@ -1381,7 +1383,7 @@ function wpPackage(string $dir): ?array
     $head = fn($file) => (string) @file_get_contents($file, false, null, 0, 8192);
     if (preg_match('/^[\s\/*#@]*Theme Name:/mi', $head("$dir/style.css"))) return ['type' => 'theme', 'slug' => basename($dir)];
     foreach (glob("$dir/*.php") ?: [] as $file) {
-        if (preg_match('/^[\s\/*#@]*Plugin Name:/mi', $head($file))) return ['type' => 'plugin', 'slug' => basename($dir)];
+        if (preg_match('/^[\s\/*#@]*Plugin Name:/mi', $head($file))) return ['type' => 'plugin', 'slug' => basename($dir), 'file' => basename($file)];
     }
     return null;
 }
@@ -1552,7 +1554,16 @@ function siteCreate(array $args): void
             if (file_exists($link) || is_link($link)) throw new LeopardError('exists', "Plugin folder already exists in the site: {$p['name']}", EXIT_EXISTS);
             symlink($p['target'], $link);
         }
-        if ($f['activate']) wp($site, array_merge(['plugin', 'activate'], $f['activate']));
+        // Activate a linked plugin by its main file. By name alone, WP-CLI can
+        // pick a bundled plugin with the same name, like Hello Dolly (hello.php).
+        $activate = array_map(function (string $slug) use ($plugins): string {
+            foreach ($plugins as $p) {
+                $pkg = $p['name'] === $slug ? wpPackage($p['target']) : null;
+                if (($pkg['type'] ?? null) === 'plugin') return "$slug/{$pkg['file']}";
+            }
+            return $slug;
+        }, $f['activate']);
+        if ($activate) wp($site, array_merge(['plugin', 'activate'], $activate));
         if ($theme) {
             $link = "$dir/wp-content/themes/{$theme['name']}";
             if (file_exists($link) || is_link($link)) throw new LeopardError('exists', "Theme folder already exists in the site: {$theme['name']}", EXIT_EXISTS);

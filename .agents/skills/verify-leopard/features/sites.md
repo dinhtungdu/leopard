@@ -39,7 +39,7 @@ Preconditions:
 
 ## Gotchas
 
-- Never name a fixture `hello`. WordPress ships Hello Dolly as plugin `hello`, so the wrong plugin gets activated and `is-active hello` still passes.
+- WordPress ships Hello Dolly as `hello.php`. A linked folder named `hello` must still win (`hello/hello.php` active). Check by file, not with `is-active hello`.
 - The site name becomes the database name verbatim, hyphen included. Match it exactly, not with `LIKE`.
 - `--host 127.0.0.1:8093` with a space is exit 2. The value must follow `=`.
 - WordPress comes from wordpress.org the first time, then from the `leopard-verify-wpcache` volume. Offline, `create` uses the newest cached version.

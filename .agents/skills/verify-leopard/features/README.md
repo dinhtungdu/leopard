@@ -13,7 +13,7 @@ This directory holds the maintained recipes for verifying what Leopard users can
 
 - Every command a user types runs through `$L proof <feature-id> '<command>'`. Use `$L x` only for fixtures and scratch reads.
 - Add `--json` to every `leopard` command whose output you assert. Read fields with `jq` on the host, as in `$L x 'leopard status --json' | jq .web.port`.
-- Create fixture plugins and themes under `/code/<unique-name>` in the container. Never name one `hello`.
+- Create fixture plugins and themes under `/code/<unique-name>` in the container.
 - HTTP checks run from the host with `curl` against `$LV_URL`, or in the browser through `$L shot` and `agent-browser` with `AGENT_BROWSER_SESSION=lv-$LV_RUN`.
 - Delete the sites you create (`leopard site delete NAME`) when a later journey in the same run needs a clean list.
 
