@@ -36,4 +36,4 @@ Preconditions:
 
 - `status --json` reports `.ok` true even when a server is down. Assert `.web.running` and `.db.running`, or use `doctor`.
 - A captured `start` must return, because no server may hold the caller's pipe. `proof` captures stdout, so a hang here is a real bug.
-- `run` stays in the foreground. Start it in the background with `$L x 'leopard run >/tmp/run.log 2>&1 &'`, then stop it by its PID.
+- `run` stays in the foreground. Start it in the background with `$L x 'leopard run >$LV_SCRATCH/run.log 2>&1 &'`, then stop it by its PID.

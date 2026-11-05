@@ -21,9 +21,9 @@ Preconditions:
 
 - Baseline, with a second PHP pack in `dist/packs`. Build it with `PHP_VERSIONS="8.3 8.4" ./build.sh`, then `$L up` again. Without one, report `php-pin` as not reachable.
 - A site `gb` exists: `$L x 'leopard site create gb --json >/dev/null'`.
-- A probe in two docroots: `$L x 'printf "<?php echo PHP_VERSION, \" \", function_exists(\"xdebug_info\") ? implode(\",\", xdebug_info(\"mode\")) : \"none\";" | tee /var/lib/leopard/sites/gb/v.php /var/lib/leopard/www/v.php >/dev/null'`.
+- A probe in two docroots: `$L x 'printf "<?php echo PHP_VERSION, \" \", function_exists(\"xdebug_info\") ? implode(\",\", xdebug_info(\"mode\")) : \"none\";" | tee $LEOPARD_HOME/sites/gb/v.php $LEOPARD_HOME/www/v.php >/dev/null'`.
 
-- **Pin PHP.** `$L proof php-pin 'leopard site create v2 --php 8.4 --json'`, then `$L x 'cp /var/lib/leopard/sites/gb/v.php /var/lib/leopard/sites/v2/'`. `curl $LV_URL/v2/v.php` starts with `8.4.`, and `curl $LV_URL/gb/v.php` starts with `8.3.`.
+- **Pin PHP.** `$L proof php-pin 'leopard site create v2 --php 8.4 --json'`, then `$L x 'cp $LEOPARD_HOME/sites/gb/v.php $LEOPARD_HOME/sites/v2/'`. `curl $LV_URL/v2/v.php` starts with `8.4.`, and `curl $LV_URL/gb/v.php` starts with `8.3.`.
 - **Xdebug one site.** `$L proof xdebug-site 'leopard site set gb --xdebug debug --json'`. `curl $LV_URL/gb/v.php` ends in `debug`, and `curl $LV_URL/v.php` ends in `none`.
 - **No-op.** Repeat the same command. `.changed` is `false`.
 - **Under load.** Loop `curl -s -o /dev/null -w '%{http_code}\n' $LV_URL/gb/v.php` for 6 s on the host while `$L x` runs `leopard site set gb --xdebug MODE` for `off`, `develop`, and `debug`. Every code is `200`. Save the counts with `proof`.

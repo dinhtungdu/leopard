@@ -22,7 +22,7 @@ Preconditions:
 - Baseline, and a site `gb` exists.
 
 - **Mark.** `cur=$($L x 'leopard logs mark')`. The output is a non-empty token.
-- **Trigger.** `$L x 'printf "<?php trigger_error(\"only-gb\", E_USER_WARNING);" >/var/lib/leopard/sites/gb/w.php; printf "<?php trigger_error(\"only-root\", E_USER_WARNING);" >/var/lib/leopard/www/w.php'`, then `curl -s $LV_URL/gb/w.php $LV_URL/w.php >/dev/null`.
+- **Trigger.** `$L x 'printf "<?php trigger_error(\"only-gb\", E_USER_WARNING);" >$LEOPARD_HOME/sites/gb/w.php; printf "<?php trigger_error(\"only-root\", E_USER_WARNING);" >$LEOPARD_HOME/www/w.php'`, then `curl -s $LV_URL/gb/w.php $LV_URL/w.php >/dev/null`.
 - **Read.** `$L proof logs-site "leopard logs --site gb --kind php --since '$cur' --wait 5 --json"`. `.entries | length` is 1, the message contains `only-gb`, and `.cursor` is set.
 - **Access log.** `$L proof logs-kind "leopard logs --site gb --kind access --since '$cur' --json"` has an entry for `/gb/w.php`.
 
