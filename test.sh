@@ -120,6 +120,12 @@ docker exec "$c" sh -ec '
   # Settings persist: no env needed now, and status still knows the URL.
   [ "$(leopard status --json | j "\$d[\"web\"][\"url\"]")" = http://127.0.0.1:8080 ]
   echo "settings persist: ok"
+  # The database client skips a world-writable config, so a umask of 000
+  # must not make `leopard mysql` lose its login.
+  rm /var/lib/leopard/conf/my.cnf
+  (umask 000; leopard restart >/dev/null)
+  [ "$(leopard mysql -N -e "select 1")" = 1 ]
+  echo "leopard mysql after start with umask 000: ok"
   # PHP on the command line keeps warnings out of stdout.
   [ "$(leopard php -r "trigger_error(\"w\", E_USER_WARNING); echo \"v\";" 2>/dev/null)" = v ]
   echo "cli stdout clean: ok"
@@ -146,7 +152,8 @@ docker exec "$c" sh -ec '
   url=$(j "\$d[\"site\"][\"url\"]" </tmp/gb.json)
   [ "$url" = http://127.0.0.1:8080/gb ]
   [ "$(leopard site wp gb option get home)" = "$url" ]
-  leopard site wp gb plugin is-active hello
+  # WordPress ships Hello Dolly as hello.php. The linked hello plugin must win.
+  [ "$(leopard site wp gb plugin list --status=active --field=file)" = hello/hello.php ]
   leopard php -r "echo file_get_contents(\"$url/wp-login.php\");" | grep -q user_login
   leopard php -r "echo file_get_contents(\"$url/sample-page/\");" | grep -q "Sample Page"
   echo "site create, pretty permalinks, plugin link: ok"
@@ -291,7 +298,7 @@ docker exec "$c" sh -ec '
     [ "$(leopard site wp gb option get home)" = "$url" ]
     leopard php -r "echo file_get_contents(\"$url/wp-login.php\");" | grep -q user_login
     leopard db use mariadb >/dev/null
-    leopard site wp gb plugin is-active hello
+    [ "$(leopard site wp gb plugin list --status=active --field=file)" = hello/hello.php ]
     echo "db use mysql-8.4 --copy-data and back: ok"
   fi
 
