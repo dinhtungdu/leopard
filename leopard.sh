@@ -130,10 +130,12 @@ Server
                       Start at boot with systemd. Writes outside \$LEOPARD_HOME.
 
 Sites (WordPress, served at <url>/<name>)
-  site create NAME [--php VERSION] [--xdebug MODE] [--dir PATH]
-                   [--plugin [NAME=]PATH]... [--activate PLUGIN]...
+  site create [NAME] [--php VERSION] [--xdebug MODE] [--dir PATH]
+                   [--plugin [NAME=]PATH]... [--activate PLUGIN]... [--theme [NAME=]PATH]
                    [--import-sql FILE [--content ZIP] [--from-url URL]]
                    [--wp-version V] [--title T] [--admin-user U] [--admin-password P]
+                   Without NAME, inside a plugin or theme folder: names the site
+                   after the folder, links it, and activates it. Starts the stack.
   site set NAME [--php VERSION|default] [--xdebug MODE|default]
   site list | site info NAME | site path NAME | site delete NAME
   site wp NAME ARGS...   Run WP-CLI against that site, with its PHP

@@ -293,6 +293,23 @@ docker exec "$c" sh -ec '
   echo "leopard run heals and stops: ok"
   leopard start >/dev/null
 
+  # site create with no name, inside a plugin or theme folder, with the stack
+  # stopped: starts it, names the site after the folder, links and activates it.
+  mkdir -p /code/hello-plugin /code/hello-theme
+  printf "<?php\n/*\n * Plugin Name: Hello Plugin\n */\n" >/code/hello-plugin/hello-plugin.php
+  printf "/*\nTheme Name: Hello Theme\n*/\n" >/code/hello-theme/style.css
+  echo "<?php echo \"HELLO-THEME\";" >/code/hello-theme/index.php
+  leopard stop >/dev/null
+  (cd /code/hello-plugin && leopard site create --json) | j "\$d[\"site\"][\"plugins\"][0][\"target\"]" | grep -qx /code/hello-plugin
+  leopard site wp hello-plugin plugin is-active hello-plugin
+  (cd /code/hello-theme && leopard site create >/dev/null)
+  leopard php -r "echo file_get_contents(\"${url%/gb}/hello-theme/\");" | grep -q HELLO-THEME
+  set +e; (cd /code/hello-plugin && leopard site create >/dev/null 2>&1); a=$?; (cd /tmp && leopard site create >/dev/null 2>&1); b=$?; set -e
+  [ "$a $b" = "4 2" ]
+  leopard site delete hello-plugin >/dev/null; leopard site delete hello-theme >/dev/null
+  [ -f /code/hello-plugin/hello-plugin.php ] && [ -f /code/hello-theme/style.css ]
+  echo "site create in a plugin or theme folder: ok"
+
   # skill setup: a stub that reads the guide from this Leopard; never replaces
   # a skill it did not write unless --force; remove takes only its own.
   sh_home=/tmp/skill-home; mkdir -p $sh_home/.claude $sh_home/.agents/skills/using-leopard

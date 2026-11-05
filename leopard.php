@@ -1272,6 +1272,10 @@ function doctor(): void
             $link = "{$s['dir']}/wp-content/plugins/{$p['name']}";
             $add("site $n: plugin {$p['name']}", is_link($link) && realpath($link) === $p['target'], $p['target']);
         }
+        if ($t = $s['theme'] ?? null) {
+            $link = "{$s['dir']}/wp-content/themes/{$t['name']}";
+            $add("site $n: theme {$t['name']}", is_link($link) && realpath($link) === $t['target'], $t['target']);
+        }
         // PHP runs in PHP-FPM, not in Apache, so Apache rejects these lines.
         $ht = @file_get_contents("{$s['dir']}/.htaccess");
         if ($ht !== false && preg_match('/^\s*php_(value|flag|admin_value|admin_flag)\b/mi', $ht)) {
@@ -1351,11 +1355,37 @@ function wp(array $site, array $args, ?string $stdin = null, bool $check = true)
     return run(array_merge(["$R/bin/wp", "--path={$site['dir']}"], $args), $stdin, $check, ['LEOPARD_PHP' => "{$php['dir']}/bin/php"]);
 }
 
+// What a folder holds, found the way WordPress finds it: a theme has a
+// style.css with a Theme Name header; a plugin has a top-level PHP file with
+// a Plugin Name header.
+function wpPackage(string $dir): ?array
+{
+    $head = fn($file) => (string) @file_get_contents($file, false, null, 0, 8192);
+    if (preg_match('/^[\s\/*#@]*Theme Name:/mi', $head("$dir/style.css"))) return ['type' => 'theme', 'slug' => basename($dir)];
+    foreach (glob("$dir/*.php") ?: [] as $file) {
+        if (preg_match('/^[\s\/*#@]*Plugin Name:/mi', $head($file))) return ['type' => 'plugin', 'slug' => basename($dir)];
+    }
+    return null;
+}
+
 function siteCreate(array $args): void
 {
     global $H, $sock;
-    [$pos, $f] = parseFlags($args, ['dir', 'title', 'wp-version', 'import-sql', 'content', 'from-url', 'admin-user', 'admin-password', 'admin-email', 'php', 'xdebug'], ['plugin', 'activate']);
-    if (count($pos) !== 1) throw new LeopardError('usage', 'Usage: leopard site create NAME [options]. See `leopard help`.', EXIT_USAGE);
+    [$pos, $f] = parseFlags($args, ['dir', 'title', 'wp-version', 'import-sql', 'content', 'from-url', 'admin-user', 'admin-password', 'admin-email', 'php', 'xdebug', 'theme'], ['plugin', 'activate']);
+    if (count($pos) > 1) throw new LeopardError('usage', 'Usage: leopard site create [NAME] [options]. See `leopard help`.', EXIT_USAGE);
+    // No name inside a plugin or theme folder: the site takes the folder's
+    // name, and the folder is linked and activated.
+    if (!$pos) {
+        $cwd = getcwd();
+        $pkg = wpPackage($cwd) ?? throw new LeopardError('usage', 'Name the site: `leopard site create NAME`, or run it inside a plugin or theme folder.', EXIT_USAGE);
+        $pos = [$pkg['slug']];
+        if ($pkg['type'] === 'plugin') {
+            $f['plugin'][] = $cwd;
+            $f['activate'][] = $pkg['slug'];
+        } else {
+            $f['theme'] ??= $cwd;
+        }
+    }
     $name = $pos[0];
     validName($name);
     $dir = $f['dir'] ?? "$H/sites/$name";
@@ -1377,18 +1407,26 @@ function siteCreate(array $args): void
         if ($target === false || !is_dir($target)) throw new LeopardError('not_found', "Plugin folder not found: $path", EXIT_NOT_FOUND);
         $plugins[] = ['name' => $pname ?? basename($target), 'target' => $target];
     }
+    $theme = null;
+    if (isset($f['theme'])) {
+        [$tname, $path] = str_contains($f['theme'], '=') ? explode('=', $f['theme'], 2) : [null, $f['theme']];
+        $target = realpath($path);
+        if ($target === false || !is_file("$target/style.css")) throw new LeopardError('not_found', "Theme folder not found, or it has no style.css: $path", EXIT_NOT_FOUND);
+        $theme = ['name' => $tname ?? basename($target), 'target' => $target];
+    }
     $php = isset($f['php']) ? needPhp($f['php'])['id'] : null;
 
     $lock = sitesLock();
     if ($old = readSite($name)) {
         throw ($old['state'] ?? 'ready') === 'creating'
             ? new LeopardError('exists', "An earlier create of '$name' did not finish.", EXIT_EXISTS, "Run `leopard site delete $name` to remove what it left, then create it again.")
-            : new LeopardError('exists', "Site '$name' already exists.", EXIT_EXISTS, "Use `leopard site info $name`, or `leopard site delete $name` first.");
+            : new LeopardError('exists', "Site '$name' already exists.", EXIT_EXISTS, "It is at {$old['url']}/. Use `leopard site info $name`, or `leopard site delete $name` first.");
     }
     if (file_exists($dir) || is_link($dir)) throw new LeopardError('exists', "Folder already exists: $dir", EXIT_EXISTS, 'Leopard never adopts an existing folder. Pick another --dir.');
+    // A first `site create` starts the stack, so it works on its own.
+    if (!alive(loadState()['web'] ?? null)) startStack(docroot());
     $db = db();
     if (dbExists($db, $name)) throw new LeopardError('exists', "Database already exists: $name", EXIT_EXISTS, 'Leopard never adopts an existing database.');
-    if (!alive(loadState()['web'] ?? null)) throw new LeopardError('not_running', 'Apache is not running.', EXIT_NOT_RUNNING, 'Run `leopard start` first.');
 
     // The record comes first, marked "creating". If this run is killed
     // outright, `site delete` can still find and remove what it made.
@@ -1458,11 +1496,17 @@ function siteCreate(array $args): void
             symlink($p['target'], $link);
         }
         if ($f['activate']) wp($site, array_merge(['plugin', 'activate'], $f['activate']));
+        if ($theme) {
+            $link = "$dir/wp-content/themes/{$theme['name']}";
+            if (file_exists($link) || is_link($link)) throw new LeopardError('exists', "Theme folder already exists in the site: {$theme['name']}", EXIT_EXISTS);
+            symlink($theme['target'], $link);
+            wp($site, ['theme', 'activate', $theme['name']]);
+        }
 
         $version = preg_match("/\\\$wp_version = '([^']+)'/", file_get_contents("$dir/wp-includes/version.php"), $m) ? $m[1] : null;
         $site = [
             'name' => $name, 'dir' => $dir, 'url' => $url, 'db' => $name, 'php' => $php, 'xdebug' => $xdebug, 'source' => $source,
-            'wp_version' => $version, 'plugins' => $plugins, 'admin' => ['user' => $adminUser, 'password' => $adminPassword],
+            'wp_version' => $version, 'plugins' => $plugins, 'theme' => $theme, 'admin' => ['user' => $adminUser, 'password' => $adminPassword],
             'state' => 'ready', 'created_at' => gmdate('c'),
         ];
         writeAtomic($record, json_encode($site, JSON_FLAGS) . "\n");
@@ -1473,7 +1517,9 @@ function siteCreate(array $args): void
         throw $e;
     }
     $view = siteView($site);
-    out(['site' => $view], "Created site $name ($source, WordPress $version, PHP {$view['runs']['php']})\nurl: $url/\nadmin: $url/wp-admin/ (user $adminUser, password $adminPassword)\ndir: $dir\n");
+    $linked = array_merge(array_map(fn($p) => "plugin {$p['name']} -> {$p['target']}", $plugins), $theme ? ["theme {$theme['name']} -> {$theme['target']}"] : []);
+    out(['site' => $view], "Created site $name ($source, WordPress $version, PHP {$view['runs']['php']})\nurl: $url/\nadmin: $url/wp-admin/ (user $adminUser, password $adminPassword)\ndir: $dir\n"
+        . implode('', array_map(fn($l) => "linked: $l\n", $linked)));
 }
 
 function siteSet(array $args): void

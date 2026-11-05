@@ -24,15 +24,21 @@ http://localhost:8080/ lists every site.
 - **Built for agents.** Every command speaks JSON, exits with a stable code, and
   never waits for input. One command teaches your coding agent to use it.
 
-## Develop a plugin
+## Develop a plugin or theme
 
-Link your checkout into a site. Edits show up on the next page load.
+Run `site create` inside your plugin or theme folder. Leopard names the site after
+the folder, links your code into it, activates it, and starts the stack if needed.
+Edits show up on the next page load.
 
 ```sh
-leopard site create dev --plugin ~/code/my-plugin --activate my-plugin
-leopard site wp dev plugin list          # WP-CLI, already pointed at the site
-leopard logs --site dev                  # this site's errors and requests
+cd ~/code/my-plugin
+leopard site create                      # http://localhost:8080/my-plugin/
+leopard site wp my-plugin plugin list    # WP-CLI, already pointed at the site
+leopard logs --site my-plugin            # this site's errors and requests
 ```
+
+From anywhere else, name the site and the code:
+`leopard site create dev --plugin ~/code/my-plugin --activate my-plugin --theme ~/code/my-theme`.
 
 Start from a copy of a real site instead of a fresh install:
 
@@ -67,8 +73,8 @@ upgrade. Agents then get:
 | --- | --- |
 | `leopard start` / `stop` / `restart` | Run the stack. `start` also repairs anything that died. |
 | `leopard status` | Ports, URLs, database login, and each site's PHP and Xdebug. |
-| `leopard site create NAME` | A WordPress site at `<url>/NAME/`, with its own folder and database. |
-| `leopard site list` / `info` / `delete` | Manage sites. `delete` never touches linked checkouts. |
+| `leopard site create [NAME]` | A WordPress site at `<url>/NAME/`, with its own folder and database. No NAME inside a plugin or theme folder uses that folder. |
+| `leopard site list` / `info` / `delete` | Manage sites. `delete` never touches linked code. |
 | `leopard site set NAME --php 8.4` | Switch one site's PHP. No request fails during the switch. |
 | `leopard site set NAME --xdebug debug` | Xdebug for one site. Other sites never load it. |
 | `leopard site wp NAME ...` | WP-CLI for that site, on its PHP. |

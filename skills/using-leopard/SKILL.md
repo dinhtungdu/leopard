@@ -51,7 +51,9 @@ LEOPARD_PORT=8082 LEOPARD_DB_PORT=3307 LEOPARD_URL=http://<host-ip>:8082 leopard
 ## Sites
 
 ```sh
+cd /path/to/plugin-or-theme && leopard site create --json   # named after the folder
 leopard site create NAME --plugin /path/to/plugin-checkout --activate plugin-slug --json
+leopard site create NAME --theme /path/to/theme-checkout --json
 leopard site create NAME --import-sql db.sql --content wp-content.zip --json
 leopard site list --json
 leopard site info NAME --json
@@ -62,8 +64,14 @@ leopard site delete NAME --json
 - A site lives at `<url>/NAME/`. Its folder is `$LEOPARD_HOME/sites/NAME`, or
   `--dir PATH`. Its database is named `NAME`. The JSON output has `url`,
   `admin_url`, `dir`, `db`, and the admin login (default `admin` / `password`).
+- Without NAME, run inside a plugin folder (a top-level PHP file with a
+  `Plugin Name:` header) or a theme folder (`style.css` with `Theme Name:`).
+  The site takes the folder's name, and the folder is linked and activated.
+  Elsewhere, no NAME is exit 2. The folder name must be a valid site name.
+- `create` starts the stack if it is not running.
 - `--plugin [SLUG=]PATH` symlinks a checkout into `wp-content/plugins`. It never
   copies it. Repeat it for several plugins. `--activate SLUG` activates one.
+  `--theme [SLUG=]PATH` symlinks a theme into `wp-content/themes` and activates it.
 - `--import-sql` imports a dump instead of a fresh install. `--content` unpacks
   a zip into the site first. URLs are rewritten from the dump's `home`, or from
   `--from-url`. The admin user gets the given password.
@@ -72,7 +80,7 @@ leopard site delete NAME --json
   run made. If it was killed outright, `site info` shows `"state": "creating"`;
   run `site delete NAME` to clean up, then create again.
 - `delete` removes only a site that `create` made: its database and folder.
-  Symlinked plugin checkouts are left untouched.
+  Symlinked plugin and theme checkouts are left untouched.
 - Without network access to wordpress.org, `create` uses the newest WordPress
   in the WP-CLI cache. Pass `--wp-version` to pick one.
 
