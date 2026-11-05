@@ -495,6 +495,7 @@ function siteView(array $site): array
 {
     $php = sitePhp($site);
     $site['admin_url'] = $site['url'] . '/wp-admin/';
+    $site['port'] = $site['port'] ?? null;
     $site['exists'] = is_dir($site['dir']);
     $site['php'] = $site['php'] ?? null;
     $site['xdebug'] = $site['xdebug'] ?? null;
@@ -591,15 +592,15 @@ function socketPath(string $pool, int $gen): string
 // master stays the same, and gets a new one when it moves.
 function wantedPools(array $state, string $docroot): array
 {
-    $want = [['_root', $docroot, packMeta(defaultPhp()), cfg()['xdebug'], null]];
-    foreach (allSites() as $s) $want[] = [$s['name'], $s['dir'], sitePhp($s), siteXdebug($s), $s['name']];
+    $want = [['_root', $docroot, packMeta(defaultPhp()), cfg()['xdebug'], null, null]];
+    foreach (allSites() as $s) $want[] = [$s['name'], $s['dir'], sitePhp($s), siteXdebug($s), $s['name'], $s['port'] ?? null];
     $pools = [];
-    foreach ($want as [$name, $dir, $pack, $mode, $site]) {
+    foreach ($want as [$name, $dir, $pack, $mode, $site, $sitePort]) {
         $key = $pack['id'] . '.' . str_replace(',', '+', $mode);
         $old = $state['pools'][$name] ?? null;
         $gen = $old && $old['key'] === $key ? $old['gen'] : ($old['gen'] ?? 0) + 1;
         $pools[$name] = ['name' => $name, 'key' => $key, 'pack' => $pack['id'], 'mode' => $mode, 'dir' => $dir,
-            'site' => $site, 'gen' => $gen, 'sock' => socketPath($name, $gen)];
+            'site' => $site, 'port' => $sitePort, 'gen' => $gen, 'sock' => socketPath($name, $gen)];
     }
     return $pools;
 }
@@ -699,9 +700,15 @@ function applyMaster(array &$state, string $key, array $pools): void
     $state['fpm'][$key] = $m;
 }
 
+// A site lives at <url>/<name> by default, or at the root of its own port.
 function siteConf(array $pool): string
 {
     $n = $pool['site'];
+    $dir = "<Directory \"{$pool['dir']}\">\n  Options FollowSymLinks\n  AllowOverride All\n  Require all granted\n  CGIPassAuth On\n"
+        . "  <FilesMatch \"\\.php$\">\n    SetHandler \"proxy:unix:{$pool['sock']}|fcgi://p{$pool['gen']}-" . strtolower($n) . "\"\n  </FilesMatch>\n</Directory>\n";
+    if ($pool['port']) {
+        return "Listen {$pool['port']}\n<VirtualHost *:{$pool['port']}>\n  DocumentRoot \"{$pool['dir']}\"\n  SetEnv LEOPARD_SITE $n\n$dir</VirtualHost>\n";
+    }
     return "Alias \"/$n\" \"{$pool['dir']}\"\n<Directory \"{$pool['dir']}\">\n  Options FollowSymLinks\n  AllowOverride All\n"
         . "  Require all granted\n  CGIPassAuth On\n  <FilesMatch \"\\.php$\">\n"
         . "    SetHandler \"proxy:unix:{$pool['sock']}|fcgi://p{$pool['gen']}-" . strtolower($n) . "\"\n  </FilesMatch>\n</Directory>\n"
@@ -1040,7 +1047,8 @@ function docroot(): string
     $dir = cfg()['docroot'] ?? "$H/www";
     if ($dir === "$H/www") {
         @mkdir($dir, 0777, true);
-        if (count(scandir($dir)) === 2) file_put_contents("$dir/index.php", startPage());
+        $ours = array_values(array_diff(scandir($dir), ['.', '..'])) === ['index.php'] && str_contains((string) @file_get_contents("$dir/index.php"), '<title>Leopard</title>');
+        if (count(scandir($dir)) === 2 || $ours) writeIfChanged("$dir/index.php", startPage());
     }
     return $dir;
 }
@@ -1053,7 +1061,11 @@ function startPage(): string
 \$sites = [];
 foreach (glob($reg . '/*.json') ?: [] as \$f) {
     \$s = json_decode(file_get_contents(\$f), true);
-    if ((\$s['state'] ?? '') === 'ready') \$sites[] = htmlspecialchars(\$s['name']);
+    if ((\$s['state'] ?? '') !== 'ready') continue;
+    // A site on its own port: same host the browser used, that port.
+    \$host = parse_url('http://' . (\$_SERVER['HTTP_HOST'] ?? 'localhost'), PHP_URL_HOST);
+    \$href = empty(\$s['port']) ? '/' . \$s['name'] . '/' : '//' . \$host . ':' . \$s['port'] . '/';
+    \$sites[\$s['name']] = htmlspecialchars(\$href);
 }
 ?><!doctype html>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width">
@@ -1069,7 +1081,7 @@ li a.admin { float: right; font-size: .9em; }
 <h1><span class="dot"></span>Leopard is running</h1>
 <p class="sub">Apache, PHP, and MariaDB in one file.</p>
 <?php if (\$sites): ?>
-<ul><?php foreach (\$sites as \$n): ?><li><a href="/<?= \$n ?>/"><?= \$n ?></a><a class="admin" href="/<?= \$n ?>/wp-admin/">admin</a></li><?php endforeach ?></ul>
+<ul><?php foreach (\$sites as \$n => \$h): ?><li><a href="<?= \$h ?>"><?= htmlspecialchars(\$n) ?></a><a class="admin" href="<?= \$h ?>wp-admin/">admin</a></li><?php endforeach ?></ul>
 <?php else: ?>
 <p>No sites yet. Make one:</p>
 <p><code>leopard site create mysite</code></p>
@@ -1371,7 +1383,7 @@ function wpPackage(string $dir): ?array
 function siteCreate(array $args): void
 {
     global $H, $sock;
-    [$pos, $f] = parseFlags($args, ['dir', 'title', 'wp-version', 'import-sql', 'content', 'from-url', 'admin-user', 'admin-password', 'admin-email', 'php', 'xdebug', 'theme'], ['plugin', 'activate']);
+    [$pos, $f] = parseFlags($args, ['dir', 'title', 'wp-version', 'import-sql', 'content', 'from-url', 'admin-user', 'admin-password', 'admin-email', 'php', 'xdebug', 'theme', 'port'], ['plugin', 'activate']);
     if (count($pos) > 1) throw new LeopardError('usage', 'Usage: leopard site create [NAME] [options]. See `leopard help`.', EXIT_USAGE);
     // No name inside a plugin or theme folder: the site takes the folder's
     // name, and the folder is linked and activated.
@@ -1392,7 +1404,16 @@ function siteCreate(array $args): void
     if (!str_starts_with($dir, '/')) $dir = getcwd() . "/$dir";
     $dir = rtrim($dir, '/');
     if ($dir === '') throw new LeopardError('usage', '--dir cannot be /', EXIT_USAGE);
+    $sitePort = null;
+    if (isset($f['port'])) {
+        $sitePort = (int) $f['port'];
+        if ((string) $sitePort !== $f['port'] || $sitePort < 1 || $sitePort > 65535) throw new LeopardError('usage', "--port needs a port number: {$f['port']}", EXIT_USAGE);
+    }
     $url = cfg()['url'] . "/$name";
+    if ($sitePort) {
+        $u = parse_url(cfg()['url']);
+        $url = "{$u['scheme']}://{$u['host']}:$sitePort";
+    }
     $adminUser = $f['admin-user'] ?? 'admin';
     $adminPassword = $f['admin-password'] ?? 'password';
     if (isset($f['content']) && !isset($f['import-sql'])) throw new LeopardError('usage', '--content needs --import-sql', EXIT_USAGE);
@@ -1425,13 +1446,21 @@ function siteCreate(array $args): void
     if (file_exists($dir) || is_link($dir)) throw new LeopardError('exists', "Folder already exists: $dir", EXIT_EXISTS, 'Leopard never adopts an existing folder. Pick another --dir.');
     // A first `site create` starts the stack, so it works on its own.
     if (!alive(loadState()['web'] ?? null)) startStack(docroot());
+    if ($sitePort) {
+        $c = cfg();
+        $taken = array_filter(allSites(), fn($s) => ($s['port'] ?? null) === $sitePort);
+        // A reload with a port Apache cannot take would stop every site.
+        if ($sitePort === $c['port'] || $sitePort === $c['db_port'] || $taken || !portFree('0.0.0.0', $sitePort)) {
+            throw new LeopardError('port_in_use', "Port $sitePort is in use" . ($taken ? ' by site ' . reset($taken)['name'] : '') . ', or not allowed.', EXIT_EXISTS, 'Pick another --port.');
+        }
+    }
     $db = db();
     if (dbExists($db, $name)) throw new LeopardError('exists', "Database already exists: $name", EXIT_EXISTS, 'Leopard never adopts an existing database.');
 
     // The record comes first, marked "creating". If this run is killed
     // outright, `site delete` can still find and remove what it made.
     $record = registryDir() . "/$name.json";
-    $site = ['name' => $name, 'dir' => $dir, 'url' => $url, 'db' => $name, 'php' => $php, 'xdebug' => $xdebug, 'state' => 'creating', 'plugins' => []];
+    $site = ['name' => $name, 'dir' => $dir, 'url' => $url, 'port' => $sitePort, 'db' => $name, 'php' => $php, 'xdebug' => $xdebug, 'state' => 'creating', 'plugins' => []];
     writeAtomic($record, json_encode($site, JSON_FLAGS) . "\n");
     // Undo, newest first, everything this run made if a later step fails.
     $undo = [function () use ($record) { @unlink($record); try { applyChanges(); } catch (Throwable) {} }];
@@ -1486,9 +1515,10 @@ function siteCreate(array $args): void
         }
         if (isset($f['title']) && $source === 'import') wp($site, ['option', 'update', 'blogname', $f['title'], '--skip-plugins', '--skip-themes']);
 
-        // Pretty permalinks under /<name>/. Written here, so it never depends
+        // Pretty permalinks under the site's path. Written here, so it never depends
         // on WP-CLI detecting mod_rewrite.
-        file_put_contents("$dir/.htaccess", "# BEGIN WordPress\n<IfModule mod_rewrite.c>\nRewriteEngine On\nRewriteBase /$name/\nRewriteRule ^index\\.php$ - [L]\nRewriteCond %{REQUEST_FILENAME} !-f\nRewriteCond %{REQUEST_FILENAME} !-d\nRewriteRule . /$name/index.php [L]\n</IfModule>\n# END WordPress\n");
+        $base = rtrim(parse_url($url, PHP_URL_PATH) ?? '', '/') . '/';
+        file_put_contents("$dir/.htaccess", "# BEGIN WordPress\n<IfModule mod_rewrite.c>\nRewriteEngine On\nRewriteBase $base\nRewriteRule ^index\\.php$ - [L]\nRewriteCond %{REQUEST_FILENAME} !-f\nRewriteCond %{REQUEST_FILENAME} !-d\nRewriteRule . {$base}index.php [L]\n</IfModule>\n# END WordPress\n");
 
         foreach ($plugins as $p) {
             $link = "$dir/wp-content/plugins/{$p['name']}";
@@ -1505,7 +1535,7 @@ function siteCreate(array $args): void
 
         $version = preg_match("/\\\$wp_version = '([^']+)'/", file_get_contents("$dir/wp-includes/version.php"), $m) ? $m[1] : null;
         $site = [
-            'name' => $name, 'dir' => $dir, 'url' => $url, 'db' => $name, 'php' => $php, 'xdebug' => $xdebug, 'source' => $source,
+            'name' => $name, 'dir' => $dir, 'url' => $url, 'port' => $sitePort, 'db' => $name, 'php' => $php, 'xdebug' => $xdebug, 'source' => $source,
             'wp_version' => $version, 'plugins' => $plugins, 'theme' => $theme, 'admin' => ['user' => $adminUser, 'password' => $adminPassword],
             'state' => 'ready', 'created_at' => gmdate('c'),
         ];

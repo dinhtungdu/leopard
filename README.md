@@ -40,6 +40,9 @@ leopard logs --site my-plugin            # this site's errors and requests
 From anywhere else, name the site and the code:
 `leopard site create dev --plugin ~/code/my-plugin --activate my-plugin --theme ~/code/my-theme`.
 
+Need a site at the root of its own address instead of under `/mysite/`?
+`leopard site create mysite --port 8090` serves it at http://localhost:8090/.
+
 Start from a copy of a real site instead of a fresh install:
 
 ```sh

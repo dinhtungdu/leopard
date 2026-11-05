@@ -315,6 +315,18 @@ docker exec "$c" sh -ec '
   [ -f /code/hello-plugin/hello-plugin.php ] && [ -f /code/hello-theme/style.css ]
   echo "site create in a plugin or theme folder: ok"
 
+  # --port: the site at the root of its own port, with pretty permalinks and
+  # its own log tag. A taken port is refused before Apache could fail on it.
+  leopard site create rooty --port 8091 --json | j "\$d[\"site\"][\"url\"]" | grep -qx http://127.0.0.1:8091
+  leopard site wp rooty post create --post_title=PortPost --post_status=publish >/dev/null
+  leopard php -r "echo file_get_contents(\"http://127.0.0.1:8091/portpost/\");" | grep -q PortPost
+  leopard logs --site rooty --kind access --json | grep -q portpost
+  set +e; leopard site create other --port 8091 >/dev/null 2>&1; a=$?; leopard site create other --port "$(leopard status --json | j "\$d[\"web\"][\"port\"]")" >/dev/null 2>&1; b=$?; set -e
+  [ "$a $b" = "4 4" ]
+  leopard site delete rooty >/dev/null
+  leopard php -r "echo file_get_contents(\"${url%/gb}/gb/wp-login.php\");" | grep -q user_login
+  echo "site on its own port: ok"
+
   # skill setup: a stub that reads the guide from this Leopard; never replaces
   # a skill it did not write unless --force; remove takes only its own.
   sh_home=/tmp/skill-home; mkdir -p $sh_home/.claude $sh_home/.agents/skills/using-leopard
