@@ -34,6 +34,11 @@ for image in alpine:3.20 debian:12-slim ubuntu:24.04; do
   t=$(date +%s%N); docker exec "$c" leopard start /site >/dev/null; echo "cold start (unpack + db + web): $(ms "$t") ms"
   docker exec "$c" sh -c "$get" | grep '^OK' | grep 'sapi=fpm-fcgi imagick=ok xdebug=none iconv=true uid=65534' | grep 'missing=\[\]'
   docker exec "$c" leopard start /site >/dev/null && echo "second start while running: ok"
+  # A libheif plugin on the host must never load into the bundled PHP.
+  docker exec "$c" sh -c 'd=/usr/lib/$(uname -m)-linux-gnu/libheif/plugins; mkdir -p $d && echo junk >$d/libheif-junk.so'
+  heif=$(docker exec "$c" leopard php -r 'Imagick::queryFormats();' 2>&1)
+  [ -z "$heif" ] || { echo "$heif" | head -3; exit 1; }
+  echo "host libheif plugins ignored: ok"
   docker exec "$c" leopard stop
   # A stale record that points at a live, unrelated process (PID 1).
   docker exec "$c" sh -c 'echo "{\"web\":{\"pid\":1,\"start\":\"0\",\"port\":8080},\"db\":{\"pid\":1,\"start\":\"0\"},\"fpm\":{},\"pools\":{}}" >/var/lib/leopard/run/state.json'

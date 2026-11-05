@@ -44,6 +44,10 @@ awk '/=> \//{print $3} /^[[:space:]]*\/.*ld-linux/{print $1}' /tmp/ldd.txt | sor
 cp -Ln /lib/*-linux-gnu/libnss_*.so.2 /lib/*-linux-gnu/libresolv.so.2 "$OUT/lib/" 2>/dev/null || true
 # glibc loads charset converters (used by iconv) from a compiled-in path.
 cp -r /usr/lib/*-linux-gnu/gconv "$OUT/lib/gconv"
+# libheif loads codec plugins from a compiled-in path too. On a host that has
+# plugins there, they pull in host libraries built for a newer glibc. The
+# wrappers point libheif at this folder instead, which the pack keeps empty.
+mkdir -p "$OUT/lib/heif-plugins"
 LDSO=$(basename "$(ls "$OUT"/lib/ld-linux-*.so.*)")
 
 # Each wrapper runs its binary through the pack's own loader, so the host's
@@ -65,7 +69,7 @@ H=\$(cd "\$P/../.." && pwd)
 M=\$P/imagemagick
 export MAGICK_CODER_MODULE_PATH="\$(echo "\$M"/lib/modules-*/coders)" MAGICK_CODER_FILTER_PATH="\$(echo "\$M"/lib/modules-*/filters)" MAGICK_CONFIGURE_PATH="\$M/etc"
 # An empty scan dir keeps a PHP install on the host out of the way.
-export GCONV_PATH="\$P/lib/gconv" PHP_INI_SCAN_DIR="\${PHP_INI_SCAN_DIR-}"$ini
+export GCONV_PATH="\$P/lib/gconv" LIBHEIF_PLUGIN_PATH="\$P/lib/heif-plugins" PHP_INI_SCAN_DIR="\${PHP_INI_SCAN_DIR-}"$ini
 exec "\$P/lib/$LDSO" --library-path "\$P/lib" --argv0 "\$0" "\$P/libexec/$b" -d extension_dir="\$P/ext" \\
   -d openssl.cafile="\$P/ca-certificates.crt" -d curl.cainfo="\$P/ca-certificates.crt" "\$@"
 EOF
