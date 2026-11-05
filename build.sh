@@ -74,7 +74,7 @@ files() {
     mkdir -p "$t/packs/$id"
     tar -xzf "$f" -C "$t/packs/$id"
     cp leopard.sh "$t/leopard"
-    cp leopard.php skills/using-leopard/SKILL.md "$t/"
+    cp leopard.php install.sh skills/using-leopard/SKILL.md "$t/"
     printf '%s\n' "$idx" >"$t/packs.json"
     echo "$id" >"$t/CONTROL_PHP"
     tar -C "$t" -czf dist/payload.tgz .

@@ -154,6 +154,8 @@ Tools (bundled)
                       and leopard first on PATH
   link [dir]          Link those tools into dir (default: \$LEOPARD_HOME/bin)
   version             Versions of Apache, PHP, and the database
+  update [TAG]        Download the latest Leopard (or release TAG) and install it
+                      over this one, keeping its PHP. Restarts it if it runs.
   skill [show]        Print the guide for AI agents (SKILL.md)
   skill setup [--dry-run] [--force] | status | remove
                       Install a small skill into ~/.agents/skills (and
@@ -190,6 +192,14 @@ case $cmd in
   # Linked tools run without the launcher, so write their settings now.
   link) (control prepare); link "${1:-}" ;;
   service) service "$@" ;;
+  update)
+    case $#:${1:-} in 0: | 1:[!-]*) ;; *) die 2 "Usage: leopard update [TAG]" ;; esac
+    [ $# -eq 1 ] && export LEOPARD_VERSION="$1"
+    # The installer defaults to PHP 8.3; keep the PHP line this file came with.
+    LEOPARD_PHP=${LEOPARD_PHP:-$(sed 's/^php-\([0-9]*\.[0-9]*\).*/\1/' "$R/CONTROL_PHP")}
+    export LEOPARD_PHP
+    exec sh "$R/install.sh"
+    ;;
   skill) case ${1:-show} in show) cat "$R/SKILL.md" ;; *) control skill "$@" ;; esac ;;
   help | -h | --help) usage ;;
   *) control "$cmd" "$@" ;;

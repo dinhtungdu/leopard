@@ -116,7 +116,9 @@ and copies every database. `leopard db use mariadb` switches back.
 **Start at boot.** `leopard service install` adds a systemd unit. In a container
 with no init, run `leopard run` as the main process.
 
-**Upgrade.** Run the install line again. A running Leopard restarts on the new version.
+**Upgrade.** `leopard update` (or `leopard update v0.3.0` for a release tag). It keeps
+your PHP, and a running Leopard restarts on the new version. Running the install line
+again also works.
 
 **Uninstall.** `leopard stop`, then `rm -rf ~/.leopard ~/.local/bin/leopard`
 (as root: `/var/lib/leopard` and `/usr/local/bin/leopard`).

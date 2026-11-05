@@ -66,6 +66,15 @@ docker exec -e LEOPARD_PHP="$php" -e name="$name" "$c" sh -ec '
   sh /install.sh | grep "Restarted the running Leopard" >/dev/null
   leopard php -r "echo file_get_contents(\"http://127.0.0.1:8080/\");" | grep -q "Leopard is running"
   echo "install again upgrades and restarts: ok"
+  want=$LEOPARD_PHP
+  out=$(unset LEOPARD_PHP; leopard update)
+  echo "$out" | grep -q "Restarted the running Leopard."
+  echo "$out" | grep -q "with PHP $want"
+  leopard php -r "echo file_get_contents(\"http://127.0.0.1:8080/\");" | grep -q "Leopard is running"
+  echo "leopard update upgrades and restarts: ok"
+  rc=0; leopard update a b 2>/dev/null || rc=$?
+  [ "$rc" = 2 ]
+  echo "leopard update a b refused: ok"
   echo "0000  $name" >/rel/SHA256SUMS
   ! sh /install.sh 2>/dev/null && echo "bad checksum refused: ok"
 '

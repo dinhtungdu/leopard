@@ -20,9 +20,10 @@ command -v leopard || ls ~/.leopard/bin/leopard
 curl -fsSL https://raw.githubusercontent.com/dinhtungdu/leopard/main/install.sh | sh
 ```
 
-`LEOPARD_PHP=8.5` before `sh` picks the default PHP (8.3, 8.4, or 8.5). Running
-the line again upgrades Leopard and restarts it if it runs. If `leopard` is not on
-PATH afterwards, the installer prints its full path; use that.
+`LEOPARD_PHP=8.5` before `sh` picks the default PHP (8.3, 8.4, or 8.5).
+`leopard update` upgrades Leopard, keeps its PHP, and restarts it if it runs.
+`leopard update TAG` installs a given release, like `v0.3.0`. If `leopard` is not
+on PATH afterwards, the installer prints its full path; use that.
 
 ## Read the state first
 
