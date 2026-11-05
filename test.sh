@@ -42,6 +42,30 @@ for image in alpine:3.20 debian:12-slim ubuntu:24.04; do
   docker rm -f "$c" >/dev/null
 done
 
+echo "== install.sh on alpine:3.20"
+# A local copy of the release stands in for GitHub. Busybox wget downloads it.
+name=$(basename "$BIN"); php=${name#leopard-php}; php=${php%%-*}
+c=$(docker run -d -v "$BIN:/rel/$name:ro" -v "$(realpath "$(dirname "$0")")/install.sh:/install.sh:ro" alpine:3.20 sleep infinity)
+docker exec -e LEOPARD_PHP="$php" -e name="$name" "$c" sh -ec '
+  cd /rel && sha256sum "$name" >SHA256SUMS
+  LEOPARD_HOME=/tmp/srv-home "/rel/$name" php -S 127.0.0.1:9000 -t /rel >/dev/null 2>&1 &
+  for i in $(seq 100); do wget -qO /dev/null http://127.0.0.1:9000/SHA256SUMS 2>/dev/null && break; sleep 0.2; done
+  export LEOPARD_DOWNLOAD_URL=http://127.0.0.1:9000
+  sh /install.sh | grep "leopard start" >/dev/null
+  [ "$(readlink /usr/local/bin/leopard)" = /var/lib/leopard/leopard ]
+  # Without a folder, start serves its own page, never the current folder.
+  cd / && leopard start >/dev/null
+  leopard php -r "echo file_get_contents(\"http://127.0.0.1:8080/\");" | grep -q "Leopard is running"
+  leopard version | grep -q "^leopard "
+  echo "install, then start page: ok"
+  sh /install.sh | grep "Restarted the running Leopard" >/dev/null
+  leopard php -r "echo file_get_contents(\"http://127.0.0.1:8080/\");" | grep -q "Leopard is running"
+  echo "install again upgrades and restarts: ok"
+  echo "0000  $name" >/rel/SHA256SUMS
+  ! sh /install.sh 2>/dev/null && echo "bad checksum refused: ok"
+'
+docker rm -f "$c" >/dev/null
+
 echo "== WordPress on alpine:3.20"
 # Without network access to wordpress.org, the host's WP-CLI cache lets
 # `site create` and `wp core download` still find WordPress.

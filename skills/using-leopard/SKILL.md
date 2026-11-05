@@ -15,12 +15,14 @@ the same release. It changes nothing outside `$LEOPARD_HOME` (default `~/.leopar
 
 ```sh
 command -v leopard || ls ~/.leopard/bin/leopard
-# Not there: download the file for this machine (x86_64 or aarch64).
-curl -fLo leopard https://github.com/dinhtungdu/leopard/releases/latest/download/leopard-php8.3-linux-$(uname -m)
-chmod +x leopard
+# Not there: install it. It needs no root and changes nothing outside
+# ~/.leopard and ~/.local/bin (/var/lib/leopard and /usr/local/bin as root).
+curl -fsSL https://raw.githubusercontent.com/dinhtungdu/leopard/main/install.sh | sh
 ```
 
-Builds exist for PHP 8.3, 8.4, and 8.5: change `php8.3` in the file name.
+`LEOPARD_PHP=8.5` before `sh` picks the default PHP (8.3, 8.4, or 8.5). Running
+the line again upgrades Leopard and restarts it if it runs. If `leopard` is not on
+PATH afterwards, the installer prints its full path; use that.
 
 ## Read the state first
 
@@ -43,6 +45,8 @@ LEOPARD_PORT=8082 LEOPARD_DB_PORT=3307 LEOPARD_URL=http://<host-ip>:8082 leopard
 - Set the ports when 8080 or 3306 may be taken; `start` fails fast with
   `db_start_failed` or `web_start_failed` if a port is busy.
 - Set `LEOPARD_URL` to the address the browser uses. Site URLs are built from it.
+- `start` without a folder serves `$LEOPARD_HOME/www` at `/`, a page that links
+  every site. `start DIR` serves DIR there instead, and later starts keep it.
 
 ## Sites
 

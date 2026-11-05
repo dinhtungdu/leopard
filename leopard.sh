@@ -113,7 +113,8 @@ Usage: leopard <command> [--json]
 
 Server
   start [docroot]     Start Apache, PHP, and the database. Serves docroot at /
-                      (default: the last docroot, else the current folder). Safe to rerun.
+                      (default: the last docroot, else \$LEOPARD_HOME/www, which
+                      lists your sites). Safe to rerun.
   stop | restart
   run                 Start, then stay in the foreground and restart anything that
                       dies. For containers and systemd. Ctrl-C or SIGTERM stops all.

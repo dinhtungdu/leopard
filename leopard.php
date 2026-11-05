@@ -1014,7 +1014,7 @@ function applyChanges(): bool
     $lock = stateLock();
     $state = loadState();
     if (!alive($state['web'] ?? null)) return false;
-    applyPhp($state, $state['web']['port'], cfg()['docroot'] ?? getcwd());
+    applyPhp($state, $state['web']['port'], docroot());
     return true;
 }
 
@@ -1031,11 +1031,59 @@ function stopStack(): void
     saveState(['web' => null, 'db' => null, 'fpm' => [], 'pools' => []]);
 }
 
+// The folder served at /. Without one given, Leopard serves its own www
+// folder, never the current one, so `leopard start` run in $HOME does not
+// publish $HOME. An empty www gets a start page that lists the sites.
+function docroot(): string
+{
+    global $H;
+    $dir = cfg()['docroot'] ?? "$H/www";
+    if ($dir === "$H/www") {
+        @mkdir($dir, 0777, true);
+        if (count(scandir($dir)) === 2) file_put_contents("$dir/index.php", startPage());
+    }
+    return $dir;
+}
+
+function startPage(): string
+{
+    $reg = var_export(registryDir(), true);
+    return <<<PHP
+<?php
+\$sites = [];
+foreach (glob($reg . '/*.json') ?: [] as \$f) {
+    \$s = json_decode(file_get_contents(\$f), true);
+    if ((\$s['state'] ?? '') === 'ready') \$sites[] = htmlspecialchars(\$s['name']);
+}
+?><!doctype html>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>Leopard</title>
+<style>
+body { font: 17px/1.6 system-ui, sans-serif; max-width: 36rem; margin: 4rem auto; padding: 0 1rem; color: #1c1917; }
+h1 { font-size: 1.8rem; margin-bottom: .2rem; } p.sub { color: #78716c; margin-top: 0; }
+a { color: #b45309; } code { background: #f5f5f4; padding: .1em .35em; border-radius: 4px; }
+ul { padding: 0; list-style: none; } li { padding: .5rem 0; border-bottom: 1px solid #e7e5e4; }
+li a.admin { float: right; font-size: .9em; }
+.dot { display: inline-block; width: .55em; height: .55em; border-radius: 50%; background: #16a34a; margin-right: .45em; vertical-align: .15em; }
+</style>
+<h1><span class="dot"></span>Leopard is running</h1>
+<p class="sub">Apache, PHP, and MariaDB in one file.</p>
+<?php if (\$sites): ?>
+<ul><?php foreach (\$sites as \$n): ?><li><a href="/<?= \$n ?>/"><?= \$n ?></a><a class="admin" href="/<?= \$n ?>/wp-admin/">admin</a></li><?php endforeach ?></ul>
+<?php else: ?>
+<p>No sites yet. Make one:</p>
+<p><code>leopard site create mysite</code></p>
+<?php endif ?>
+<p>Log in as <code>admin</code> / <code>password</code>. To serve your own folder here: <code>leopard start /path/to/folder</code></p>
+
+PHP;
+}
+
 function cmdStart(array $args, bool $restart = false): void
 {
     global $H, $R;
     $c = cfg();
-    $dir = $args[0] ?? ($c['docroot'] ?? '.');
+    $dir = $args[0] ?? docroot();
     if (!is_dir($dir)) throw new LeopardError('not_found', "Document root does not exist: $dir", EXIT_NOT_FOUND);
     $docroot = realpath($dir);
     if ($restart) stopStack();
@@ -1082,7 +1130,7 @@ function versions(): array
         $v[$name] = $version;
     }
     $v['php'] = packMeta(defaultPhp())['version'];
-    return $v;
+    return ['leopard' => packIndex()['release'] ?? 'dev'] + $v;
 }
 
 function status(): void
@@ -1906,7 +1954,7 @@ function runCmd(array $args): never
         if (!$dead) { $fails = 0; continue; }
         try {
             fwrite(STDERR, gmdate('c') . " leopard run: a server stopped; restarting it\n");
-            startStack(cfg()['docroot'] ?? getcwd());
+            startStack(docroot());
             $fails = 0;
         } catch (Throwable $e) {
             fwrite(STDERR, gmdate('c') . ' leopard run: ' . $e->getMessage() . "\n");
