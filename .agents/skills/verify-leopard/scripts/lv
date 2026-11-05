@@ -1,0 +1,132 @@
+#!/bin/bash
+# Drives a built Leopard bundle in a throwaway container, the way a user runs it.
+# Run from anywhere inside the repo. See ../SKILL.md for the workflow.
+#
+#   lv up [IMAGE]            start a run: container + `leopard start`, prints its env
+#   lv doctor                read-only: is this run worth driving?
+#   lv x CMD...              run a shell command in the container (sh -c)
+#   lv proof NAME CMD...     like x, and save cmd, stdout, stderr, exit code as proof
+#   lv shot NAME URL         browser screenshot + ARIA snapshot of a URL as proof
+#   lv down                  remove the container; proof stays
+#   lv ls                    runs on this machine, and whether their container lives
+#
+# LV_RUN picks a run; default is the last `lv up`. LV_BIN picks the bundle;
+# default is dist/leopard-php<lowest>-linux-<arch>.
+set -euo pipefail
+REPO=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
+ROOT=$REPO/dist/verify
+LABEL=leopard-verify
+die() { echo "lv: $*" >&2; exit 1; }
+
+load() {
+  run=${LV_RUN:-$(cat "$ROOT/current" 2>/dev/null || true)}
+  [ -n "$run" ] && [ -f "$ROOT/$run/env" ] || die "no run. Start one with: lv up"
+  # shellcheck disable=SC1090
+  . "$ROOT/$run/env"
+}
+
+free_port() { # first port >= $1 that nothing listens on
+  p=$1
+  while ss -Hltn "sport = :$p" | grep -q .; do p=$((p + 1)); done
+  echo "$p"
+}
+
+up() {
+  image=${1:-alpine:3.20}
+  bin=${LV_BIN:-$(ls "$REPO"/dist/leopard-php*-linux-"$(uname -m)" 2>/dev/null | sort -V | head -1)}
+  [ -n "$bin" ] && [ -x "$bin" ] || die "no bundle in dist/. Build first: ./build.sh"
+  bin=$(realpath "$bin")
+  run=$(date +%Y%m%d-%H%M%S)-$$
+  dir=$ROOT/$run
+  mkdir -p "$dir"
+  # Host networking so the browser, curl, and `--host` sites on extra ports all
+  # see the same URLs as the container. Ports are picked free, never the defaults.
+  port=$(free_port 18080)
+  db_port=$(free_port 13306)
+  c=leopard-verify-$run
+  packs=()
+  [ -d "$REPO/dist/packs" ] && packs=(-v "$REPO/dist/packs:/packs:ro")
+  docker run -d --name "$c" --label "$LABEL=$run" --network host \
+    -v "$bin:/usr/local/bin/leopard:ro" "${packs[@]}" \
+    -v leopard-verify-wpcache:/root/.wp-cli/cache \
+    -e LEOPARD_PACKS_URL=file:///packs \
+    "$image" sleep infinity >/dev/null
+  cat >"$dir/env" <<EOF
+LV_RUN=$run
+LV_C=$c
+LV_BIN=$bin
+LV_BIN_SHA=$(sha256sum "$bin" | cut -c1-12)
+LV_IMAGE=$image
+LV_PORT=$port
+LV_DB_PORT=$db_port
+LV_URL=http://127.0.0.1:$port
+LV_PROOF=$dir
+EOF
+  echo "$run" >"$ROOT/current"
+  docker exec -e LEOPARD_PORT="$port" -e LEOPARD_DB_PORT="$db_port" -e LEOPARD_URL="http://127.0.0.1:$port" \
+    "$c" sh -c 'umask 022; exec leopard start --json' >"$dir/start.json" 2>"$dir/start.stderr" ||
+    { cat "$dir/start.json" "$dir/start.stderr" >&2; die "leopard start failed; run: lv down"; }
+  cat "$dir/env"
+}
+
+doctor() {
+  load
+  ok=true
+  check() { if eval "$2" >/dev/null 2>&1; then echo "ok    $1"; else echo "FAIL  $1"; ok=false; fi; }
+  check "container $LV_C runs and is ours" \
+    "[ \"\$(docker inspect -f '{{.State.Running}} {{index .Config.Labels \"$LABEL\"}}' $LV_C)\" = 'true $LV_RUN' ]"
+  check "bundle unchanged since lv up ($LV_BIN_SHA)" "[ \"\$(sha256sum $LV_BIN | cut -c1-12)\" = $LV_BIN_SHA ]"
+  check "bundle newer than leopard.sh, leopard.php, SKILL.md" \
+    "[ -z \"\$(find $REPO/leopard.sh $REPO/leopard.php $REPO/skills/using-leopard/SKILL.md -newer $LV_BIN)\" ]"
+  check "web answers at $LV_URL" "curl -fsS -o /dev/null $LV_URL/"
+  check "leopard doctor --json is ok" "docker exec $LV_C leopard doctor --json | grep -q '\"ok\": *true'"
+  $ok
+}
+
+proof() {
+  load
+  name=$1; shift
+  mkdir -p "$LV_PROOF/$name"
+  f=$LV_PROOF/$name/$(date +%H%M%S%N | cut -c1-9)
+  printf '%s\n' "$*" >"$f.cmd"
+  set +e
+  docker exec -i "$LV_C" sh -c "umask 022; $*" >"$f.out" 2>"$f.err" </dev/null
+  code=$?
+  set -e
+  echo "$code" >"$f.exit"
+  cat "$f.out"
+  [ -s "$f.err" ] && sed 's/^/stderr: /' "$f.err" >&2
+  echo "exit $code -> $f.{cmd,out,err,exit}" >&2
+  return "$code"
+}
+
+shot() {
+  load
+  name=$1 url=$2
+  mkdir -p "$LV_PROOF/$name"
+  export AGENT_BROWSER_SESSION=lv-$LV_RUN
+  agent-browser open "$url" >/dev/null
+  agent-browser set viewport 1280 800 2 >/dev/null
+  agent-browser snapshot >"$LV_PROOF/$name/page.aria.txt"
+  agent-browser screenshot "$LV_PROOF/$name/page.png" >/dev/null
+  agent-browser get url
+  echo "-> $LV_PROOF/$name/page.{png,aria.txt}" >&2
+}
+
+down() {
+  load
+  docker rm -f "$LV_C" >/dev/null 2>&1 || true
+  AGENT_BROWSER_SESSION="lv-$LV_RUN" agent-browser close >/dev/null 2>&1 || true
+  echo "removed $LV_C; proof kept in $LV_PROOF"
+}
+
+case ${1:-} in
+  up) shift; up "$@" ;;
+  doctor) doctor ;;
+  x) shift; load; docker exec -i "$LV_C" sh -c "umask 022; $*" ;;
+  proof) shift; [ $# -ge 2 ] || die "usage: lv proof NAME CMD..."; proof "$@" ;;
+  shot) shift; [ $# -eq 2 ] || die "usage: lv shot NAME URL"; shot "$@" ;;
+  down) down ;;
+  ls) docker ps -a --filter "label=$LABEL" --format '{{.Label "'$LABEL'"}}  {{.Status}}'; ls "$ROOT" 2>/dev/null | grep -v current || true ;;
+  *) sed -n '2,14p' "$0"; exit 2 ;;
+esac

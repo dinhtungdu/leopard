@@ -18,6 +18,8 @@
   `leopard.php` only, `./build.sh files` rebuilds the files in seconds.
 - `test.sh` checks behavior through the public commands. Add a check there for
   each new command or flag.
+- To prove one change end to end with evidence (CLI output, browser
+  screenshots), use the `verify-leopard` skill in `.agents/skills/`.
 - When a change is done and tested, commit it and push to `main` without
   asking. Push a release tag (`v*`) only when the user asks for one: a tag
   publishes a GitHub release.
