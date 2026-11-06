@@ -1614,6 +1614,16 @@ function siteDelete(array $args): void
     $lock = sitesLock();
     $site = needSite($args[0]);
     $name = $site['name'];
+    // A create killed outright leaves its WP-CLI child running, still writing
+    // into the folder. Any create still running holds the lock we now hold, so
+    // a process of ours that works on this folder is left over. Stop it first.
+    $arg = "--path={$site['dir']}";
+    foreach (glob('/proc/[0-9]*', GLOB_ONLYDIR) ?: [] as $d) {
+        $pid = (int) basename($d);
+        if (ours($pid) && in_array($arg, explode("\0", (string) @file_get_contents("$d/cmdline")), true)) {
+            stopProc(['pid' => $pid, 'start' => procStart($pid)], SIGKILL, 0);
+        }
+    }
     db()->query("DROP DATABASE IF EXISTS `{$site['db']}`");
     // rm does not follow the plugin symlinks, so linked checkouts stay intact.
     // A folder that became a symlink is not ours to empty.

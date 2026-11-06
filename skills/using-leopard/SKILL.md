@@ -88,7 +88,8 @@ leopard site delete NAME --json
   run made. If it was killed outright, `site info` shows `"state": "creating"`;
   run `site delete NAME` to clean up, then create again.
 - `delete` removes only a site that `create` made: its database and folder.
-  Symlinked plugin and theme checkouts are left untouched.
+  Symlinked plugin and theme checkouts are left untouched. It first stops any
+  WP-CLI still working on that site, such as one left by a killed `create`.
 - Without network access to wordpress.org, `create` uses the newest WordPress
   in the WP-CLI cache. Pass `--wp-version` to pick one.
 
