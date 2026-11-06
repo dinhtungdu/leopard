@@ -197,9 +197,13 @@ docker exec "$c" sh -ec '
   echo "noisy child does not hang create: ok"
 
   # A create killed outright leaves a record that site delete can clean up.
-  timeout -s KILL 2 leopard site create killed >/dev/null 2>&1 || true
-  leopard site delete killed >/dev/null
-  [ ! -e /var/lib/leopard/sites/killed ] && [ ! -e /var/lib/leopard/conf/sites/killed.conf ] && ! leopard mysql -e "use killed" 2>/dev/null
+  # Killed early, its WP-CLI child keeps writing into the folder, so try
+  # several kill times: delete must stop that child, not race it.
+  for t in 0.5 1 1.5 0.5 1 1.5 2; do
+    timeout -s KILL $t leopard site create killed >/dev/null 2>&1 || true
+    leopard site delete killed >/dev/null
+    [ ! -e /var/lib/leopard/sites/killed ] && [ ! -e /var/lib/leopard/conf/sites/killed.conf ] && ! leopard mysql -e "use killed" 2>/dev/null
+  done
   echo "killed create cleaned by delete: ok"
 
   # Only a successful start saves environment overrides.
