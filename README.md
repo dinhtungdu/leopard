@@ -99,6 +99,17 @@ upgrade. Agents then get:
 Run `leopard restart` after a change. On a remote machine or VM, set the base URL to
 the address your browser uses: site URLs are built from it.
 
+**Behind a tunnel or proxy.** Point cloudflared, `tailscale funnel`, ngrok, nginx, or
+any other proxy on the same machine at `http://localhost:8080`. No setting is needed.
+A request that comes from 127.0.0.1 or ::1 with `X-Forwarded-Proto`,
+`X-Forwarded-Host`, or `X-Forwarded-For` uses the address the browser used. Links
+and redirects follow it, and pages have the saved address swapped for it, so images
+in posts and imported dumps load too. Your database keeps the saved URL, so
+`localhost`, WP-CLI, and cron work as before. These headers from any other machine
+are ignored. A site made with `--host` needs a tunnel to its own port. Anyone who
+gets the public address can log in with `admin` / `password`, so change the password
+before you share it.
+
 Database login for apps and tests: host `127.0.0.1`, user `dev`, password `dev`.
 `leopard mysql` logs in as root.
 

@@ -530,6 +530,51 @@ xdebug.output_dir = "$H/logs/xdebug"
 INI;
 }
 
+// Runs before every web request. A request that a proxy or tunnel on this
+// machine forwards (from 127.0.0.1 or ::1, with X-Forwarded-* headers) gets
+// the scheme and host the browser used. A site then builds its links and
+// redirects for that address, and its pages have the saved address swapped
+// for it. Headers from any other client are ignored, so no one can fake them.
+// WP-CLI, cron, and plain local requests keep the saved URL.
+function proxyPrepend(): string
+{
+    return <<<'PHP'
+<?php
+(function () {
+    $s = &$_SERVER;
+    if (!in_array($s['REMOTE_ADDR'] ?? '', ['127.0.0.1', '::1'], true)) return;
+    if (!isset($s['HTTP_X_FORWARDED_HOST']) && !isset($s['HTTP_X_FORWARDED_PROTO']) && !isset($s['HTTP_X_FORWARDED_FOR'])) return;
+    $first = fn($v) => strtolower(trim(explode(',', (string) $v)[0]));
+    $proto = $first($s['HTTP_X_FORWARDED_PROTO'] ?? (empty($s['HTTPS']) ? 'http' : 'https'));
+    $host = $first($s['HTTP_X_FORWARDED_HOST'] ?? $s['HTTP_HOST'] ?? '');
+    if (!in_array($proto, ['http', 'https'], true) || !preg_match('/^(\[[0-9a-f:.]+\]|[a-z0-9.-]+)(:\d{1,5})?$/', $host)) return;
+    if ($proto === 'https') $s['HTTPS'] = 'on'; else unset($s['HTTPS']);
+    $s['HTTP_HOST'] = $host;
+    $public = "$proto://$host";
+    $s['LEOPARD_PUBLIC_ORIGIN'] = $public;
+    $saved = getenv('LEOPARD_SITE_URL');
+    if (!$saved) return;
+    $p = parse_url($saved);
+    $origin = $p['scheme'] . '://' . $p['host'] . (isset($p['port']) ? ':' . $p['port'] : '');
+    if ($origin === $public) return;
+    define('WP_HOME', $public . ($p['path'] ?? ''));
+    define('WP_SITEURL', WP_HOME);
+    // Posts, imported dumps, and options can hold the saved address. Swap it
+    // in text responses only, also in its JSON form (http:\/\/...).
+    $find = [];
+    foreach ([$origin, str_replace('/', '\/', $origin)] as $o) $find[] = '~' . preg_quote($o, '~') . '(?![\w.:-])~';
+    $with = [$public, str_replace('/', '\/', $public)];
+    ob_start(function (string $buf) use ($find, $with) {
+        foreach (headers_list() as $h) {
+            if (stripos($h, 'content-type:') === 0 && !preg_match('~text/|json|xml|javascript~i', $h)) return $buf;
+        }
+        return preg_replace($find, $with, $buf);
+    });
+})();
+
+PHP;
+}
+
 // Settings files that do not depend on which servers run: one CLI ini per
 // PHP pack, the MariaDB client config, the WP-CLI config, and the link to
 // the default PHP. Rewritten by every command, because they hold paths into
@@ -538,6 +583,7 @@ function prepare(): void
 {
     global $H, $sock;
     foreach (['conf/php', 'conf/fpm', 'conf/sites', 'logs/sites', 'logs/xdebug', 'run/fpm', 'sites.d'] as $d) @mkdir("$H/$d", 0777, true);
+    writeIfChanged("$H/conf/proxy.php", proxyPrepend());
     $mode = cfg()['xdebug'];
     foreach (installedPacks('php') as $p) {
         writeIfChanged("$H/conf/php/cli-{$p['id']}.ini", file_get_contents("{$p['dir']}/php.ini") . "zend_extension = xdebug\n"
@@ -594,15 +640,15 @@ function socketPath(string $pool, int $gen): string
 // master stays the same, and gets a new one when it moves.
 function wantedPools(array $state, string $docroot): array
 {
-    $want = [['_root', $docroot, packMeta(defaultPhp()), cfg()['xdebug'], null, null]];
-    foreach (allSites() as $s) $want[] = [$s['name'], $s['dir'], sitePhp($s), siteXdebug($s), $s['name'], $s['port'] ?? null];
+    $want = [['_root', $docroot, packMeta(defaultPhp()), cfg()['xdebug'], null, null, null]];
+    foreach (allSites() as $s) $want[] = [$s['name'], $s['dir'], sitePhp($s), siteXdebug($s), $s['name'], $s['port'] ?? null, $s['url']];
     $pools = [];
-    foreach ($want as [$name, $dir, $pack, $mode, $site, $sitePort]) {
+    foreach ($want as [$name, $dir, $pack, $mode, $site, $sitePort, $url]) {
         $key = $pack['id'] . '.' . str_replace(',', '+', $mode);
         $old = $state['pools'][$name] ?? null;
         $gen = $old && $old['key'] === $key ? $old['gen'] : ($old['gen'] ?? 0) + 1;
         $pools[$name] = ['name' => $name, 'key' => $key, 'pack' => $pack['id'], 'mode' => $mode, 'dir' => $dir,
-            'site' => $site, 'port' => $sitePort, 'gen' => $gen, 'sock' => socketPath($name, $gen)];
+            'site' => $site, 'port' => $sitePort, 'url' => $url, 'gen' => $gen, 'sock' => socketPath($name, $gen)];
     }
     return $pools;
 }
@@ -628,8 +674,13 @@ function fpmFiles(string $key, array $pools): array
         $log = $pool['site'] ? siteLogDir($pool['site']) . '/php-error.log' : "$H/logs/php-error.log";
         $conf .= "\n[{$pool['name']}]\nlisten = \"{$pool['sock']}\"\nlisten.mode = 0666\npm = ondemand\npm.max_children = 8\n"
             . "pm.process_idle_timeout = 60s\nclear_env = no\ncatch_workers_output = yes\ndecorate_workers_output = no\n"
-            . "php_admin_value[error_log] = \"$log\"\n";
-        if ($pool['site']) $conf .= "php_admin_value[xdebug.output_dir] = \"" . siteLogDir($pool['site']) . "/xdebug\"\n";
+            . "php_admin_value[error_log] = \"$log\"\n"
+            // php_value, not admin: a site's own .user.ini may replace it.
+            . "php_value[auto_prepend_file] = \"$H/conf/proxy.php\"\n";
+        if ($pool['site']) {
+            $conf .= "php_admin_value[xdebug.output_dir] = \"" . siteLogDir($pool['site']) . "/xdebug\"\n";
+            if ($pool['url'] ?? null) $conf .= "env[LEOPARD_SITE_URL] = \"{$pool['url']}\"\n";
+        }
         if (isRoot()) {
             [$u, $g] = poolUser($pool['dir']);
             $conf .= "user = $u\ngroup = $g\n";
@@ -1064,17 +1115,20 @@ function startPage(): string
 foreach (glob($reg . '/*.json') ?: [] as \$f) {
     \$s = json_decode(file_get_contents(\$f), true);
     if ((\$s['state'] ?? '') !== 'ready') continue;
-    // A site on its own port: same host the browser used, that port.
+    // A site on its own port: same host the browser used, that port. Behind
+    // a proxy or tunnel that port is not on the public address, so no link.
     \$host = parse_url('http://' . (\$_SERVER['HTTP_HOST'] ?? 'localhost'), PHP_URL_HOST);
-    \$href = empty(\$s['port']) ? '/' . \$s['name'] . '/' : '//' . \$host . ':' . \$s['port'] . '/';
-    \$sites[\$s['name']] = htmlspecialchars(\$href);
+    if (empty(\$s['port'])) \$href = '/' . \$s['name'] . '/';
+    elseif (isset(\$_SERVER['LEOPARD_PUBLIC_ORIGIN'])) \$href = null;
+    else \$href = '//' . \$host . ':' . \$s['port'] . '/';
+    \$sites[\$s['name']] = [\$href === null ? null : htmlspecialchars(\$href), \$s['port'] ?? null];
 }
 ?><!doctype html>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>Leopard</title>
 <style>
 body { font: 17px/1.6 system-ui, sans-serif; max-width: 36rem; margin: 4rem auto; padding: 0 1rem; color: #1c1917; }
-h1 { font-size: 1.8rem; margin-bottom: .2rem; } p.sub { color: #78716c; margin-top: 0; }
+h1 { font-size: 1.8rem; margin-bottom: .2rem; } p.sub, span.sub { color: #78716c; margin-top: 0; }
 a { color: #b45309; } code { background: #f5f5f4; padding: .1em .35em; border-radius: 4px; }
 ul { padding: 0; list-style: none; } li { padding: .5rem 0; border-bottom: 1px solid #e7e5e4; }
 li a.admin { float: right; font-size: .9em; }
@@ -1083,7 +1137,7 @@ li a.admin { float: right; font-size: .9em; }
 <h1><span class="dot"></span>Leopard is running</h1>
 <p class="sub">Apache, PHP, and MariaDB in one file.</p>
 <?php if (\$sites): ?>
-<ul><?php foreach (\$sites as \$n => \$h): ?><li><a href="<?= \$h ?>"><?= htmlspecialchars(\$n) ?></a><a class="admin" href="<?= \$h ?>wp-admin/">admin</a></li><?php endforeach ?></ul>
+<ul><?php foreach (\$sites as \$n => [\$h, \$port]): ?><li><?php if (\$h === null): ?><?= htmlspecialchars(\$n) ?> <span class="sub">on port <?= (int) \$port ?>, which this address does not reach</span><?php else: ?><a href="<?= \$h ?>"><?= htmlspecialchars(\$n) ?></a><a class="admin" href="<?= \$h ?>wp-admin/">admin</a><?php endif ?></li><?php endforeach ?></ul>
 <?php else: ?>
 <p>No sites yet. Make one:</p>
 <p><code>leopard site create mysite</code></p>

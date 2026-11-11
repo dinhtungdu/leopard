@@ -93,6 +93,27 @@ leopard site delete NAME --json
 - Without network access to wordpress.org, `create` uses the newest WordPress
   in the WP-CLI cache. Pass `--wp-version` to pick one.
 
+## Behind a tunnel or reverse proxy
+
+Point the tunnel or proxy (cloudflared, `tailscale funnel`, ngrok, nginx, a
+preview proxy) at the web port on this machine. Do not change `url` or run
+`search-replace` for it.
+
+- A request from 127.0.0.1 or ::1 with `X-Forwarded-Proto`,
+  `X-Forwarded-Host`, or `X-Forwarded-For` uses the scheme and host the
+  browser used: `X-Forwarded-Host`, else `Host`. The site's path stays
+  (`/NAME/`). `X-Forwarded-Proto: https` sets `HTTPS`.
+- For that request, sites get `WP_HOME` and `WP_SITEURL` for the public
+  address, and the saved address is swapped for it in HTML, JSON, XML, CSS,
+  and JavaScript responses, so URLs saved in posts work too.
+- The database, WP-CLI, cron, and plain local requests keep the saved URL.
+  Forwarded headers from any other address are ignored.
+- A `--host` site needs a tunnel to its own port. Behind a tunnel, the start
+  page lists such sites without a link.
+- The public address lets anyone log in with the admin login (default `admin` /
+  `password`). Set a strong password first, unless the user says otherwise.
+- A site's own `.user.ini` with `auto_prepend_file` turns this off for that site.
+
 ## PHP version and Xdebug per site
 
 ```sh

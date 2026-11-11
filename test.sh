@@ -161,6 +161,29 @@ docker exec "$c" sh -ec '
   [ "$(http_code "$url/.htaccess")" = 403 ] && [ "$(http_code "$url/wp-login.php")" = 200 ]
   echo ".htaccess denied: ok"
 
+  # Through a proxy or tunnel on this machine, a site uses the address the
+  # browser used, also for URLs saved in posts. The same headers from another
+  # client change nothing, and WP-CLI keeps the saved URL.
+  cat >/tmp/fwd.php <<"EOF"
+<?php
+$c = stream_context_create(["http" => ["follow_location" => 0, "ignore_errors" => true, "header" => array_slice($argv, 2)]]);
+$b = file_get_contents($argv[1], false, $c);
+foreach ($http_response_header as $h) if (stripos($h, "location:") === 0) echo $h, "\n";
+echo $b;
+EOF
+  fwd() { leopard php /tmp/fwd.php "$@"; }
+  T="X-Forwarded-Host: tunnel.example"; S="X-Forwarded-Proto: https"
+  leopard site wp gb post create --post_title=Pic --post_name=pic --post_status=publish --post_content="<img src=\"$url/wp-content/uploads/pic.png\">" >/dev/null
+  fwd "$url/wp-admin/" "$T" "$S" | grep -qi "^location: https://tunnel.example/gb/wp-login.php"
+  fwd "$url/pic/" "$T" "$S" >/tmp/p.html
+  grep -q "https://tunnel.example/gb/wp-content/uploads/pic.png" /tmp/p.html && ! grep -q 127.0.0.1:8080 /tmp/p.html
+  fwd "$url/wp-json/wp/v2/posts" "$T" "$S" | grep -q "https:\\\\/\\\\/tunnel.example\\\\/gb\\\\/pic\\\\/"
+  fwd "$url/pic/" | grep -q "$url/wp-content/uploads/pic.png"
+  fwd "http://$(hostname -i | cut -d" " -f1):8080/gb/pic/" "$T" "$S" >/tmp/p.html
+  grep -q "$url/wp-content/uploads/pic.png" /tmp/p.html && ! grep -q tunnel.example /tmp/p.html
+  [ "$(leopard site wp gb option get home)" = "$url" ]
+  echo "proxy headers from this machine only, saved URLs swapped: ok"
+
   set +e; leopard site create gb --json >/tmp/e.json; code=$?; set -e
   [ $code = 4 ] && [ -f /var/lib/leopard/sites/gb/wp-config.php ]
   echo "second create refused, site intact: ok"
@@ -345,6 +368,16 @@ docker exec "$c" sh -ec '
   leopard logs --site rooty --kind access --json | grep -q portpost
   leopard site create picked --host=localhost:8092 --json | j "\$d[\"site\"][\"url\"]" | grep -qx http://localhost:8092
   leopard php -r "echo file_get_contents(\"http://127.0.0.1:8092/wp-login.php\");" | grep -q user_login
+  # A tunnel to a site port that keeps the public Host, as cloudflared does.
+  fwd "http://127.0.0.1:$free/portpost/" "Host: tunnel.example" "$S" | grep -q "https://tunnel.example/portpost/"
+  # The start page behind a tunnel: folder sites keep their links, a site on
+  # its own port gets none, since the tunnel does not reach that port.
+  mkdir -p /var/lib/leopard/www && leopard start /var/lib/leopard/www >/dev/null && leopard start >/dev/null
+  fwd http://127.0.0.1:8080/ "$T" "$S" >/tmp/s.html
+  grep -q "href=\"/gb/\"" /tmp/s.html && grep -q "rooty <span" /tmp/s.html && ! grep -q "tunnel.example:$free" /tmp/s.html
+  fwd http://127.0.0.1:8080/ | grep -q "href=\"//127.0.0.1:$free/\""
+  leopard start /www >/dev/null
+  echo "proxy to a site port, start page behind a tunnel: ok"
   codes=""
   for h in "--host=127.0.0.1:$free" "--host=127.0.0.1:$web" "--host=http://127.0.0.1:8093" "--host=shop.test"; do
     set +e; leopard site create other "$h" >/dev/null 2>&1; codes="$codes $?"; set -e

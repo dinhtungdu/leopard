@@ -11,6 +11,7 @@ A user creates a WordPress site with its own folder and database. The site is na
 - `site-refuse` refuses an existing name with exit 4, no NAME outside a plugin folder with exit 2, and a bad `--host` with exit 2 or 4.
 - `site-rollback` makes a failed create remove what it made. A killed create leaves `state: creating`, and `site delete` cleans it up.
 - `site-delete` removes the folder and database and keeps the linked source.
+- `site-proxy` serves a site through a tunnel or reverse proxy on the same machine. Requests from 127.0.0.1 or ::1 with `X-Forwarded-*` headers get the public address for links, redirects, and URLs saved in posts. The saved URL stays the same.
 
 ## How to get to it (user POV)
 
@@ -36,9 +37,11 @@ Preconditions:
 - **Own host.** `$L proof site-host "leopard site create rooty --host=127.0.0.1:$(( LV_PORT + 50 )) --json"`. `site.url` is `http://127.0.0.1:<that port>`, `site.port` is that port, and `curl http://127.0.0.1:<that port>/wp-login.php` contains `user_login`.
 - **Import.** `$L x 'leopard site wp hello-leopard db export $LV_SCRATCH/h.sql --quiet'`, then `$L proof site-import 'leopard site create copy --dir $LV_SCRATCH/copy --import-sql $LV_SCRATCH/h.sql --admin-password secret --json'`. `leopard site wp copy option get home` is `$LV_URL/copy`, and `user check-password admin secret` exits 0.
 - **Delete.** `$L proof site-delete 'leopard site delete copy --json'`. `$LV_SCRATCH/copy` is gone, the `copy` database is gone, and `$LV_SCRATCH/code/hello-leopard/hello-leopard.php` still exists.
+- **Behind a proxy.** The command below ran in a bare container, not through `lv` yet. Send the request from the machine Leopard runs on, because headers from any other address are ignored. `$L proof site-proxy 'leopard php -r "\$c = stream_context_create([\"http\" => [\"follow_location\" => 0, \"header\" => [\"X-Forwarded-Host: tunnel.example\", \"X-Forwarded-Proto: https\"]]]); @file_get_contents(\"$LV_URL/hello-leopard/wp-admin/\", false, \$c); echo implode(PHP_EOL, \$http_response_header);"'`. The `Location` is `https://tunnel.example/hello-leopard/wp-login.php?...`, and `leopard site wp hello-leopard option get home` is still `$LV_URL/hello-leopard`. For the browser, put nginx in front with `X-Forwarded-Host $http_host` and log in through it. Every page stays on the nginx address.
 
 ## Gotchas
 
+- Apache rejects header lines that end in a bare LF with a 400. Pass headers to PHP's stream context as an array, not a string joined with `\n`.
 - WordPress ships Hello Dolly as `hello.php`. A linked folder named `hello` must still win (`hello/hello.php` active). Check by file, not with `is-active hello`.
 - The site name becomes the database name verbatim, hyphen included. Match it exactly, not with `LIKE`.
 - `--host 127.0.0.1:8093` with a space is exit 2. The value must follow `=`.
