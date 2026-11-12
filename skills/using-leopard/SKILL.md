@@ -116,48 +116,25 @@ preview proxy) at the web port on this machine. Do not change `url` or run
 
 ### Give the user a link
 
-Start a tunnel only when the user asks for a link. Point it at the web port
-from `status --json`, or at a `--host` site's own port. A tunnel to the web
-port reaches every folder site and the start page. The site is at
-`<link>/NAME/`. Run the tunnel in the background, read its link, and stop it
-when the task is done.
+Any tunnel, reverse proxy, or hosted preview that forwards to this machine
+works the same way. Leopard needs no setting for it.
 
-| Tool | Who can open the link | Needs | Start it |
-| --- | --- | --- | --- |
-| cloudflared, quick tunnel | anyone | nothing | `cloudflared tunnel --no-autoupdate --url http://localhost:8080` |
-| cloudflared, named tunnel | anyone, on the user's domain | Cloudflare account and domain | `cloudflared tunnel run --url http://localhost:8080 NAME` |
-| Tailscale Serve | the user's tailnet only | Tailscale, logged in | `tailscale serve --bg 8080` |
-| Tailscale Funnel | anyone | Tailscale, Funnel on for the tailnet | `tailscale funnel --bg 8080` |
-| ngrok | anyone | ngrok account authtoken | `ngrok http 8080` |
-
-- Use what the user already has. If they have nothing, use the cloudflared
-  quick tunnel: it needs no account. If `cloudflared` is missing, show the
-  user this line and ask before you run it (use `amd64` on x86_64, and
-  `/usr/local/bin` as root):
-  `curl -fL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64 -o ~/.local/bin/cloudflared && chmod +x ~/.local/bin/cloudflared`
-- Read the link from the tool, never guess it:
-  - cloudflared quick tunnel: start it with `nohup ... >/tmp/cf.log 2>&1 &`,
-    wait until the log has `Registered tunnel connection`, then
-    `grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' /tmp/cf.log`. Each run
-    gets a new link. A new link can take a minute to resolve in DNS.
-  - cloudflared named tunnel: the hostname the user routed to it, set up once
-    with `cloudflared tunnel login`, `cloudflared tunnel create NAME`, and
-    `cloudflared tunnel route dns NAME HOSTNAME`.
-  - Tailscale: `tailscale serve status` (or `tailscale funnel status`) prints
-    `https://MACHINE.TAILNET.ts.net`. Stop it with `tailscale serve reset`.
-  - ngrok: start it with `nohup ngrok http 8080 >/dev/null 2>&1 &`, then read
-    `public_url` from `curl -s localhost:4040/api/tunnels`.
-- Tailscale Serve is private to the user's own devices. Prefer it when the
-  user only wants to open the site on their phone or another of their machines.
-- Before a link anyone can open, tell the user that the admin login works on
-  it, and offer to set a strong password with `leopard site wp NAME user update
-  admin --user_pass=...`.
-
-A reverse proxy on this machine works too. nginx needs
-`proxy_set_header X-Forwarded-Host $http_host;` and
-`proxy_set_header X-Forwarded-Proto $scheme;` next to `proxy_pass
-http://127.0.0.1:8080;`. Caddy's `reverse_proxy 127.0.0.1:8080` sends what
-Leopard needs as is.
+- Use the tool the user has or names. Start one only when the user asks for
+  a link, and ask before you install anything.
+- Point it at `http://localhost:PORT`: the web port from `status --json`, or a
+  `--host` site's own port. Through the web port, the site is at
+  `<link>/NAME/`, and every folder site and the start page are reachable too.
+- The tool must keep the public host in `Host` or send `X-Forwarded-Host`, and
+  send `X-Forwarded-Proto` for HTTPS. Most do by default. For a proxy you
+  configure, such as nginx, add those headers.
+- Read the link from the tool's output or status. Never guess it.
+- Check it: a request to `<link>/NAME/wp-admin/` redirects to
+  `<link>/NAME/wp-login.php`. If it redirects to localhost, the tool drops
+  the public host; see the bullet above.
+- Before a link that anyone can open, tell the user the admin login works on
+  it, and offer to set a strong password with
+  `leopard site wp NAME user update admin --user_pass=...`.
+- Stop the tunnel when the task that needed it is done.
 
 ## PHP version and Xdebug per site
 
