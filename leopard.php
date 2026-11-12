@@ -674,8 +674,9 @@ function fpmFiles(string $key, array $pools): array
         $log = $pool['site'] ? siteLogDir($pool['site']) . '/php-error.log' : "$H/logs/php-error.log";
         $conf .= "\n[{$pool['name']}]\nlisten = \"{$pool['sock']}\"\nlisten.mode = 0666\npm = ondemand\npm.max_children = 8\n"
             . "pm.process_idle_timeout = 60s\nclear_env = no\ncatch_workers_output = yes\ndecorate_workers_output = no\n"
-            . "php_admin_value[error_log] = \"$log\"\n"
-            // php_value, not admin: a site's own .user.ini may replace it.
+            // php_value, not admin: WP_DEBUG_LOG and a site's own .user.ini
+            // may replace them.
+            . "php_value[error_log] = \"$log\"\n"
             . "php_value[auto_prepend_file] = \"$H/conf/proxy.php\"\n";
         if ($pool['site']) {
             $conf .= "php_admin_value[xdebug.output_dir] = \"" . siteLogDir($pool['site']) . "/xdebug\"\n";

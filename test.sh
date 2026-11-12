@@ -161,6 +161,23 @@ docker exec "$c" sh -ec '
   [ "$(http_code "$url/.htaccess")" = 403 ] && [ "$(http_code "$url/wp-login.php")" = 200 ]
   echo ".htaccess denied: ok"
 
+  # WP_DEBUG_LOG decides where error_log() writes. Without it, the site log.
+  # As root, PHP runs as nobody here, so debug.log must be writable for it.
+  d=/var/lib/leopard/sites/gb
+  printf "<?php require \"wp-load.php\"; error_log(\"probe-\" . \$_GET[\"n\"]);" >$d/probe.php
+  touch $d/wp-content/debug.log && chmod 666 $d/wp-content/debug.log
+  probe() { leopard php -r "file_get_contents(\"$url/probe.php?n=$1\");"; }
+  leopard site wp gb config set WP_DEBUG true --raw >/dev/null
+  leopard site wp gb config set WP_DEBUG_LOG true --raw >/dev/null; probe a
+  leopard site wp gb config set WP_DEBUG_LOG /tmp/wp-debug.log >/dev/null; probe b
+  leopard site wp gb config delete WP_DEBUG_LOG >/dev/null; probe c
+  grep -q probe-a $d/wp-content/debug.log
+  grep -q probe-b /tmp/wp-debug.log
+  grep -q probe-c /var/lib/leopard/logs/sites/gb/php-error.log
+  ! grep -q probe-c $d/wp-content/debug.log || exit 1
+  leopard site wp gb config delete WP_DEBUG >/dev/null; rm $d/probe.php
+  echo "WP_DEBUG_LOG sets the error log: ok"
+
   # Through a proxy or tunnel on this machine, a site uses the address the
   # browser used, also for URLs saved in posts. The same headers from another
   # client change nothing, and WP-CLI keeps the saved URL.
