@@ -110,27 +110,54 @@ preview proxy) at the web port on this machine. Do not change `url` or run
   Forwarded headers from any other address are ignored.
 - A `--host` site needs a tunnel to its own port. Behind a tunnel, the start
   page lists such sites without a link.
-- The public address lets anyone log in with the admin login (default `admin` /
-  `password`). Set a strong password first, unless the user says otherwise.
+- Anyone who can open the public address can log in with the admin login
+  (default `admin` / `password`).
 - A site's own `.user.ini` with `auto_prepend_file` turns this off for that site.
 
-When the user asks for a public link to a site, a cloudflared quick tunnel
-needs no account and no setup. Use the web port from `status --json`, or the
-site's own port for a `--host` site:
+### Give the user a link
 
-```sh
-nohup cloudflared tunnel --no-autoupdate --url http://localhost:8080 >/tmp/cf.log 2>&1 &
-for i in $(seq 30); do grep -q 'Registered tunnel connection' /tmp/cf.log && break; sleep 1; done
-grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' /tmp/cf.log | head -1   # then add /NAME/
-```
+Start a tunnel only when the user asks for a link. Point it at the web port
+from `status --json`, or at a `--host` site's own port. A tunnel to the web
+port reaches every folder site and the start page. The site is at
+`<link>/NAME/`. Run the tunnel in the background, read its link, and stop it
+when the task is done.
 
-- If `cloudflared` is missing, show the user this line and ask before you run
-  it (use `amd64` on x86_64, and `/usr/local/bin` as root):
+| Tool | Who can open the link | Needs | Start it |
+| --- | --- | --- | --- |
+| cloudflared, quick tunnel | anyone | nothing | `cloudflared tunnel --no-autoupdate --url http://localhost:8080` |
+| cloudflared, named tunnel | anyone, on the user's domain | Cloudflare account and domain | `cloudflared tunnel run --url http://localhost:8080 NAME` |
+| Tailscale Serve | the user's tailnet only | Tailscale, logged in | `tailscale serve --bg 8080` |
+| Tailscale Funnel | anyone | Tailscale, Funnel on for the tailnet | `tailscale funnel --bg 8080` |
+| ngrok | anyone | ngrok account authtoken | `ngrok http 8080` |
+
+- Use what the user already has. If they have nothing, use the cloudflared
+  quick tunnel: it needs no account. If `cloudflared` is missing, show the
+  user this line and ask before you run it (use `amd64` on x86_64, and
+  `/usr/local/bin` as root):
   `curl -fL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64 -o ~/.local/bin/cloudflared && chmod +x ~/.local/bin/cloudflared`
-- A tunnel to the web port shares every folder site and the start page.
-- A new link can take a minute to resolve in DNS. Do not treat a first
-  "could not resolve" as a failure.
-- Stop the tunnel (`kill` its PID) when the task that needed it is done.
+- Read the link from the tool, never guess it:
+  - cloudflared quick tunnel: start it with `nohup ... >/tmp/cf.log 2>&1 &`,
+    wait until the log has `Registered tunnel connection`, then
+    `grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' /tmp/cf.log`. Each run
+    gets a new link. A new link can take a minute to resolve in DNS.
+  - cloudflared named tunnel: the hostname the user routed to it, set up once
+    with `cloudflared tunnel login`, `cloudflared tunnel create NAME`, and
+    `cloudflared tunnel route dns NAME HOSTNAME`.
+  - Tailscale: `tailscale serve status` (or `tailscale funnel status`) prints
+    `https://MACHINE.TAILNET.ts.net`. Stop it with `tailscale serve reset`.
+  - ngrok: start it with `nohup ngrok http 8080 >/dev/null 2>&1 &`, then read
+    `public_url` from `curl -s localhost:4040/api/tunnels`.
+- Tailscale Serve is private to the user's own devices. Prefer it when the
+  user only wants to open the site on their phone or another of their machines.
+- Before a link anyone can open, tell the user that the admin login works on
+  it, and offer to set a strong password with `leopard site wp NAME user update
+  admin --user_pass=...`.
+
+A reverse proxy on this machine works too. nginx needs
+`proxy_set_header X-Forwarded-Host $http_host;` and
+`proxy_set_header X-Forwarded-Proto $scheme;` next to `proxy_pass
+http://127.0.0.1:8080;`. Caddy's `reverse_proxy 127.0.0.1:8080` sends what
+Leopard needs as is.
 
 ## PHP version and Xdebug per site
 
