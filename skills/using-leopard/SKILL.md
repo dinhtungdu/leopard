@@ -114,6 +114,24 @@ preview proxy) at the web port on this machine. Do not change `url` or run
   `password`). Set a strong password first, unless the user says otherwise.
 - A site's own `.user.ini` with `auto_prepend_file` turns this off for that site.
 
+When the user asks for a public link to a site, a cloudflared quick tunnel
+needs no account and no setup. Use the web port from `status --json`, or the
+site's own port for a `--host` site:
+
+```sh
+nohup cloudflared tunnel --no-autoupdate --url http://localhost:8080 >/tmp/cf.log 2>&1 &
+for i in $(seq 30); do grep -q 'Registered tunnel connection' /tmp/cf.log && break; sleep 1; done
+grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' /tmp/cf.log | head -1   # then add /NAME/
+```
+
+- If `cloudflared` is missing, show the user this line and ask before you run
+  it (use `amd64` on x86_64, and `/usr/local/bin` as root):
+  `curl -fL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64 -o ~/.local/bin/cloudflared && chmod +x ~/.local/bin/cloudflared`
+- A tunnel to the web port shares every folder site and the start page.
+- A new link can take a minute to resolve in DNS. Do not treat a first
+  "could not resolve" as a failure.
+- Stop the tunnel (`kill` its PID) when the task that needed it is done.
+
 ## PHP version and Xdebug per site
 
 ```sh
